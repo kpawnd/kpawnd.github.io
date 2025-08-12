@@ -1,0 +1,95 @@
+
+
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>http://localhost:4000/</id>
+  <title>kpawnd</title>
+  <subtitle>A Computer Engineer's Public Diary</subtitle>
+  <updated>2025-08-13T07:05:38+08:00</updated>
+  <author>
+    <name>kpawnd</name>
+    <uri>http://localhost:4000/</uri>
+  </author>
+  <link rel="self" type="application/atom+xml" href="http://localhost:4000/feed.xml"/>
+  <link rel="alternate" type="text/html" hreflang="en"
+    href="http://localhost:4000/"/>
+  <generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator>
+  <rights> © 2025 kpawnd </rights>
+  <icon>/assets/img/favicons/favicon.ico</icon>
+  <logo>/assets/img/favicons/favicon-96x96.png</logo>
+
+
+  
+  <entry>
+    <title>self respect is the foundation of who you are, don’t lose it</title>
+    <link href="http://localhost:4000/posts/self-respect-the-foundation-of-who-you-are/" rel="alternate" type="text/html" title="self respect is the foundation of who you are, don’t lose it" />
+    <published>2025-08-13T07:00:00+08:00</published>
+  
+    <updated>2025-08-13T07:00:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/self-respect-the-foundation-of-who-you-are/</id>
+    <content type="text/html" src="http://localhost:4000/posts/self-respect-the-foundation-of-who-you-are/" />
+    <author>
+      <name>kpawnd</name>
+    </author>
+
+  
+    
+    <category term="diary" />
+    
+  
+
+  <summary>You know, as I grew up, I barely had any self respect for myself. I’m not ashamed of admitting it if anything, admitting it helps in fixing the problem, which I do see as a problem that I have.  It started affecting me in many ways, and one of them was how people treated me. If you lack respect for yourself, then no one will respect you. Your opinion will be ignored, and you, as a whole, will b...</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>how to *actually* study</title>
+    <link href="http://localhost:4000/posts/how-to-actually-study/" rel="alternate" type="text/html" title="how to *actually* study" />
+    <published>2025-08-02T00:30:00+08:00</published>
+  
+    <updated>2025-08-02T00:30:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/how-to-actually-study/</id>
+    <content type="text/html" src="http://localhost:4000/posts/how-to-actually-study/" />
+    <author>
+      <name>kpawnd</name>
+    </author>
+
+  
+    
+    <category term="diary" />
+    
+  
+
+  <summary>I’ve survived my first year of engineering school and I’d think that’s a big deal. I don’t want to jinx it or anything, but I really have no idea what the next couple of years bring. Whatever, it’s always nice to look on the positive side.  First year was okay. The stuff we did in class wasn’t difficult although I think I’m part of that tiny percentage who believes so. I was already familiar wi...</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>a much needed change</title>
+    <link href="http://localhost:4000/posts/1/" rel="alternate" type="text/html" title="a much needed change" />
+    <published>2025-08-01T20:30:00+08:00</published>
+  
+    <updated>2025-08-01T20:30:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/1/</id>
+    <content type="text/html" src="http://localhost:4000/posts/1/" />
+    <author>
+      <name>kpawnd</name>
+    </author>
+
+  
+    
+    <category term="diary" />
+    
+  
+
+  <summary>Apologizing after a long time can be really difficult. For example, I sometimes struggle with this  I know I’ve hurt people or been an ass, but I either didn’t apologize at the right time, or when I did, it didn’t come across as sincere.  On one hand, I want to apologize. On the other hand, I hesitate because it’s been a while, and maybe the person has already forgotten about it. Would apologiz...</summary>
+
+  </entry>
+
+</feed>
+
+
