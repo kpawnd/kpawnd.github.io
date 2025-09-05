@@ -4,7 +4,7 @@
   <id>http://localhost:4000/</id>
   <title>kpawnd</title>
   <subtitle>A Computer Engineer's Public Diary</subtitle>
-  <updated>2025-08-13T07:05:38+08:00</updated>
+  <updated>2025-09-05T19:33:01+08:00</updated>
   <author>
     <name>kpawnd</name>
     <uri>http://localhost:4000/</uri>
@@ -20,14 +20,38 @@
 
   
   <entry>
-    <title>self respect is the foundation of who you are, don’t lose it</title>
-    <link href="http://localhost:4000/posts/self-respect-the-foundation-of-who-you-are/" rel="alternate" type="text/html" title="self respect is the foundation of who you are, don’t lose it" />
+    <title>comfort in solitude</title>
+    <link href="http://localhost:4000/posts/loneliness/" rel="alternate" type="text/html" title="comfort in solitude" />
     <published>2025-08-13T07:00:00+08:00</published>
   
     <updated>2025-08-13T07:00:00+08:00</updated>
   
-    <id>http://localhost:4000/posts/self-respect-the-foundation-of-who-you-are/</id>
-    <content type="text/html" src="http://localhost:4000/posts/self-respect-the-foundation-of-who-you-are/" />
+    <id>http://localhost:4000/posts/loneliness/</id>
+    <content type="text/html" src="http://localhost:4000/posts/loneliness/" />
+    <author>
+      <name>kpawnd</name>
+    </author>
+
+  
+    
+    <category term="diary" />
+    
+  
+
+  <summary>Most of us are afraid of loneliness. A lot of us associate loneliness with negativity but that’s not always true, some of us prefer to be alone due many reasons. For a while now my comfort zone was and still is secluding myself from the outside world not because I’m shy or anything it’s because I can’t communicate and I’m socially anxious around people. There’s no shame in admiting that I have ...</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>self respect is the foundation of who you are, don’t lose it</title>
+    <link href="http://localhost:4000/posts/self-respect/" rel="alternate" type="text/html" title="self respect is the foundation of who you are, don’t lose it" />
+    <published>2025-08-13T07:00:00+08:00</published>
+  
+    <updated>2025-08-13T07:00:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/self-respect/</id>
+    <content type="text/html" src="http://localhost:4000/posts/self-respect/" />
     <author>
       <name>kpawnd</name>
     </author>
@@ -45,13 +69,13 @@
   
   <entry>
     <title>how to *actually* study</title>
-    <link href="http://localhost:4000/posts/how-to-actually-study/" rel="alternate" type="text/html" title="how to *actually* study" />
+    <link href="http://localhost:4000/posts/studying/" rel="alternate" type="text/html" title="how to *actually* study" />
     <published>2025-08-02T00:30:00+08:00</published>
   
     <updated>2025-08-02T00:30:00+08:00</updated>
   
-    <id>http://localhost:4000/posts/how-to-actually-study/</id>
-    <content type="text/html" src="http://localhost:4000/posts/how-to-actually-study/" />
+    <id>http://localhost:4000/posts/studying/</id>
+    <content type="text/html" src="http://localhost:4000/posts/studying/" />
     <author>
       <name>kpawnd</name>
     </author>
@@ -69,13 +93,13 @@
   
   <entry>
     <title>a much needed change</title>
-    <link href="http://localhost:4000/posts/1/" rel="alternate" type="text/html" title="a much needed change" />
+    <link href="http://localhost:4000/posts/honesty/" rel="alternate" type="text/html" title="a much needed change" />
     <published>2025-08-01T20:30:00+08:00</published>
   
     <updated>2025-08-01T20:30:00+08:00</updated>
   
-    <id>http://localhost:4000/posts/1/</id>
-    <content type="text/html" src="http://localhost:4000/posts/1/" />
+    <id>http://localhost:4000/posts/honesty/</id>
+    <content type="text/html" src="http://localhost:4000/posts/honesty/" />
     <author>
       <name>kpawnd</name>
     </author>
