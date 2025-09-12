@@ -4,7 +4,7 @@
   <id>http://localhost:4000/</id>
   <title>kpawnd</title>
   <subtitle>A Computer Engineer's Public Diary</subtitle>
-  <updated>2025-09-05T19:33:01+08:00</updated>
+  <updated>2025-09-12T18:25:13+08:00</updated>
   <author>
     <name>kpawnd</name>
     <uri>http://localhost:4000/</uri>
@@ -20,11 +20,35 @@
 
   
   <entry>
+    <title>Birthdays</title>
+    <link href="http://localhost:4000/posts/birthdays/" rel="alternate" type="text/html" title="Birthdays" />
+    <published>2025-09-12T18:25:00+08:00</published>
+  
+    <updated>2025-09-12T18:25:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/birthdays/</id>
+    <content type="text/html" src="http://localhost:4000/posts/birthdays/" />
+    <author>
+      <name>kpawnd</name>
+    </author>
+
+  
+    
+    <category term="diary" />
+    
+  
+
+  <summary>After I turned 14, I stopped celebrating my birthday. It might come as a shock to some. How can someone not celebrate their birthday? It’s your special day of the year after all. So why wouldn’t you celebrate?  My answer is that no one bothered to celebrate my birthday. I remember in fifth grade I told my friends that my birthday was a week away and that I was looking forward to celebrating it....</summary>
+
+  </entry>
+
+  
+  <entry>
     <title>comfort in solitude</title>
     <link href="http://localhost:4000/posts/loneliness/" rel="alternate" type="text/html" title="comfort in solitude" />
-    <published>2025-08-13T07:00:00+08:00</published>
+    <published>2025-09-05T07:00:00+08:00</published>
   
-    <updated>2025-08-13T07:00:00+08:00</updated>
+    <updated>2025-09-05T07:00:00+08:00</updated>
   
     <id>http://localhost:4000/posts/loneliness/</id>
     <content type="text/html" src="http://localhost:4000/posts/loneliness/" />
@@ -68,8 +92,8 @@
 
   
   <entry>
-    <title>how to *actually* study</title>
-    <link href="http://localhost:4000/posts/studying/" rel="alternate" type="text/html" title="how to *actually* study" />
+    <title>how to study (not exactly a blueprint)</title>
+    <link href="http://localhost:4000/posts/studying/" rel="alternate" type="text/html" title="how to study (not exactly a blueprint)" />
     <published>2025-08-02T00:30:00+08:00</published>
   
     <updated>2025-08-02T00:30:00+08:00</updated>
