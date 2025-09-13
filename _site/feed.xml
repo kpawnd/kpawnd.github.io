@@ -4,7 +4,7 @@
   <id>http://localhost:4000/</id>
   <title>kpawnd</title>
   <subtitle>A Computer Engineer's Public Diary</subtitle>
-  <updated>2025-09-13T19:31:46+08:00</updated>
+  <updated>2025-09-13T19:33:54+08:00</updated>
   <author>
     <name>kpawnd</name>
     <uri>http://localhost:4000/</uri>
@@ -44,8 +44,8 @@
 
   
   <entry>
-    <title>birthdays</title>
-    <link href="http://localhost:4000/posts/birthdays/" rel="alternate" type="text/html" title="birthdays" />
+    <title>why i don't celebrate my birthday</title>
+    <link href="http://localhost:4000/posts/birthdays/" rel="alternate" type="text/html" title="why i don&amp;apos;t celebrate my birthday" />
     <published>2025-09-12T18:25:00+08:00</published>
   
     <updated>2025-09-12T18:25:00+08:00</updated>
@@ -68,8 +68,8 @@
 
   
   <entry>
-    <title>comfort in solitude</title>
-    <link href="http://localhost:4000/posts/loneliness/" rel="alternate" type="text/html" title="comfort in solitude" />
+    <title>seeking comfort in solitude</title>
+    <link href="http://localhost:4000/posts/loneliness/" rel="alternate" type="text/html" title="seeking comfort in solitude" />
     <published>2025-09-05T07:00:00+08:00</published>
   
     <updated>2025-09-12T18:26:06+08:00</updated>
@@ -92,8 +92,8 @@
 
   
   <entry>
-    <title>self respect is the foundation of who you are, don’t lose it</title>
-    <link href="http://localhost:4000/posts/self-respect/" rel="alternate" type="text/html" title="self respect is the foundation of who you are, don’t lose it" />
+    <title>the importance of self respect</title>
+    <link href="http://localhost:4000/posts/self-respect/" rel="alternate" type="text/html" title="the importance of self respect" />
     <published>2025-08-13T07:00:00+08:00</published>
   
     <updated>2025-08-13T07:00:00+08:00</updated>
