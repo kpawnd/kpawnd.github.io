@@ -1,5 +1,5 @@
 ---
-title: 
+title: why i don't celebrate my birthday
 date: 2025-09-12 18:25:00 +0800
 categories: [diary]
 tags: [reflection]

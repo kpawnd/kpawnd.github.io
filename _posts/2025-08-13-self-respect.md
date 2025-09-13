@@ -1,5 +1,5 @@
 ---
-title: self respect is the foundation of who you are, don’t lose it
+title: the importance of self respect
 date: 2025-08-13 2:00:00 +0300
 categories: [diary]
 tags: [reflection]

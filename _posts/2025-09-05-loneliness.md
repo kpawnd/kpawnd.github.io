@@ -1,5 +1,5 @@
 ---
-title: comfort in solitude
+title: seeking comfort in solitude
 date: 2025-09-05 2:00:00 +0300
 categories: [diary]
 tags: [reflection]

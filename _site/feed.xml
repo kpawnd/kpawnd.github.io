@@ -4,7 +4,7 @@
   <id>http://localhost:4000/</id>
   <title>kpawnd</title>
   <subtitle>A Computer Engineer's Public Diary</subtitle>
-  <updated>2025-09-12T18:25:13+08:00</updated>
+  <updated>2025-09-13T19:31:46+08:00</updated>
   <author>
     <name>kpawnd</name>
     <uri>http://localhost:4000/</uri>
@@ -20,8 +20,32 @@
 
   
   <entry>
-    <title>Birthdays</title>
-    <link href="http://localhost:4000/posts/birthdays/" rel="alternate" type="text/html" title="Birthdays" />
+    <title>compatibility in relationships</title>
+    <link href="http://localhost:4000/posts/relationships/" rel="alternate" type="text/html" title="compatibility in relationships" />
+    <published>2025-09-13T19:30:00+08:00</published>
+  
+    <updated>2025-09-13T19:30:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/relationships/</id>
+    <content type="text/html" src="http://localhost:4000/posts/relationships/" />
+    <author>
+      <name>kpawnd</name>
+    </author>
+
+  
+    
+    <category term="diary" />
+    
+  
+
+  <summary>Relationships are not for everybody. Many of us unfortunately, are like broken records, often chasing whatever feels good in the moment. It’s tempting to express attraction to someone that’s completely normal, human even. But have you ever stopped to ask yourself is this person the right partner for me? Or Am I the right partner for them?  The first question usually gets attention, because you ...</summary>
+
+  </entry>
+
+  
+  <entry>
+    <title>birthdays</title>
+    <link href="http://localhost:4000/posts/birthdays/" rel="alternate" type="text/html" title="birthdays" />
     <published>2025-09-12T18:25:00+08:00</published>
   
     <updated>2025-09-12T18:25:00+08:00</updated>
@@ -48,7 +72,7 @@
     <link href="http://localhost:4000/posts/loneliness/" rel="alternate" type="text/html" title="comfort in solitude" />
     <published>2025-09-05T07:00:00+08:00</published>
   
-    <updated>2025-09-05T07:00:00+08:00</updated>
+    <updated>2025-09-12T18:26:06+08:00</updated>
   
     <id>http://localhost:4000/posts/loneliness/</id>
     <content type="text/html" src="http://localhost:4000/posts/loneliness/" />
@@ -96,7 +120,7 @@
     <link href="http://localhost:4000/posts/studying/" rel="alternate" type="text/html" title="how to study (not exactly a blueprint)" />
     <published>2025-08-02T00:30:00+08:00</published>
   
-    <updated>2025-08-02T00:30:00+08:00</updated>
+    <updated>2025-09-12T18:26:06+08:00</updated>
   
     <id>http://localhost:4000/posts/studying/</id>
     <content type="text/html" src="http://localhost:4000/posts/studying/" />
@@ -111,30 +135,6 @@
   
 
   <summary>I’ve survived my first year of engineering school and I’d think that’s a big deal. I don’t want to jinx it or anything, but I really have no idea what the next couple of years bring. Whatever, it’s always nice to look on the positive side.  First year was okay. The stuff we did in class wasn’t difficult although I think I’m part of that tiny percentage who believes so. I was already familiar wi...</summary>
-
-  </entry>
-
-  
-  <entry>
-    <title>a much needed change</title>
-    <link href="http://localhost:4000/posts/honesty/" rel="alternate" type="text/html" title="a much needed change" />
-    <published>2025-08-01T20:30:00+08:00</published>
-  
-    <updated>2025-08-01T20:30:00+08:00</updated>
-  
-    <id>http://localhost:4000/posts/honesty/</id>
-    <content type="text/html" src="http://localhost:4000/posts/honesty/" />
-    <author>
-      <name>kpawnd</name>
-    </author>
-
-  
-    
-    <category term="diary" />
-    
-  
-
-  <summary>Apologizing after a long time can be really difficult. For example, I sometimes struggle with this  I know I’ve hurt people or been an ass, but I either didn’t apologize at the right time, or when I did, it didn’t come across as sincere.  On one hand, I want to apologize. On the other hand, I hesitate because it’s been a while, and maybe the person has already forgotten about it. Would apologiz...</summary>
 
   </entry>
 
