@@ -4,7 +4,7 @@
   <id>http://localhost:4000/</id>
   <title>kpawnd</title>
   <subtitle>A Computer Engineer's Public Diary</subtitle>
-  <updated>2025-09-13T19:33:54+08:00</updated>
+  <updated>2025-09-24T03:55:35+08:00</updated>
   <author>
     <name>kpawnd</name>
     <uri>http://localhost:4000/</uri>
@@ -17,6 +17,30 @@
   <icon>/assets/img/favicons/favicon.ico</icon>
   <logo>/assets/img/favicons/favicon-96x96.png</logo>
 
+
+  
+  <entry>
+    <title>how far will you sink for attention?</title>
+    <link href="http://localhost:4000/posts/unreasonable/" rel="alternate" type="text/html" title="how far will you sink for attention?" />
+    <published>2025-09-24T03:55:00+08:00</published>
+  
+    <updated>2025-09-24T03:55:00+08:00</updated>
+  
+    <id>http://localhost:4000/posts/unreasonable/</id>
+    <content type="text/html" src="http://localhost:4000/posts/unreasonable/" />
+    <author>
+      <name>kpawnd</name>
+    </author>
+
+  
+    
+    <category term="diary" />
+    
+  
+
+  <summary>I don’t understand how people can willingly let others put them down and then brush it off as if nothing happened usually because they’ve internalized that they deserve it. Jokes themselves aren’t inherently bad they can lighten the mood in the right setting. But when it’s an obvious jab meant to humiliate, it stops being a joke.  I’ve stood up for many people, not because I’m some saint (belie...</summary>
+
+  </entry>
 
   
   <entry>
@@ -72,7 +96,7 @@
     <link href="http://localhost:4000/posts/loneliness/" rel="alternate" type="text/html" title="seeking comfort in solitude" />
     <published>2025-09-05T07:00:00+08:00</published>
   
-    <updated>2025-09-12T18:26:06+08:00</updated>
+    <updated>2025-09-13T19:34:20+08:00</updated>
   
     <id>http://localhost:4000/posts/loneliness/</id>
     <content type="text/html" src="http://localhost:4000/posts/loneliness/" />
@@ -96,7 +120,7 @@
     <link href="http://localhost:4000/posts/self-respect/" rel="alternate" type="text/html" title="the importance of self respect" />
     <published>2025-08-13T07:00:00+08:00</published>
   
-    <updated>2025-08-13T07:00:00+08:00</updated>
+    <updated>2025-09-13T19:34:20+08:00</updated>
   
     <id>http://localhost:4000/posts/self-respect/</id>
     <content type="text/html" src="http://localhost:4000/posts/self-respect/" />
@@ -111,30 +135,6 @@
   
 
   <summary>You know, as I grew up, I barely had any self respect for myself. I’m not ashamed of admitting it if anything, admitting it helps in fixing the problem, which I do see as a problem that I have.  It started affecting me in many ways, and one of them was how people treated me. If you lack respect for yourself, then no one will respect you. Your opinion will be ignored, and you, as a whole, will b...</summary>
-
-  </entry>
-
-  
-  <entry>
-    <title>how to study (not exactly a blueprint)</title>
-    <link href="http://localhost:4000/posts/studying/" rel="alternate" type="text/html" title="how to study (not exactly a blueprint)" />
-    <published>2025-08-02T00:30:00+08:00</published>
-  
-    <updated>2025-09-12T18:26:06+08:00</updated>
-  
-    <id>http://localhost:4000/posts/studying/</id>
-    <content type="text/html" src="http://localhost:4000/posts/studying/" />
-    <author>
-      <name>kpawnd</name>
-    </author>
-
-  
-    
-    <category term="diary" />
-    
-  
-
-  <summary>I’ve survived my first year of engineering school and I’d think that’s a big deal. I don’t want to jinx it or anything, but I really have no idea what the next couple of years bring. Whatever, it’s always nice to look on the positive side.  First year was okay. The stuff we did in class wasn’t difficult although I think I’m part of that tiny percentage who believes so. I was already familiar wi...</summary>
 
   </entry>
 
