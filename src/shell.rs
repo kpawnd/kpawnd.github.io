@@ -47,7 +47,7 @@ impl Shell {
         env.insert("HOME".into(), "/home/user".into());
         env.insert("PATH".into(), "/bin".into());
         env.insert("USER".into(), "user".into());
-        env.insert("GITHUB".into(), "https://www.github.com/kpawnd".into());
+        env.insert("GITHUB".into(), "https://github.com/kpawnd".into());
         Shell {
             history: Vec::new(),
             env,

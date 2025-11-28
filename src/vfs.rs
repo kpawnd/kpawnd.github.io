@@ -62,7 +62,7 @@ impl Vfs {
                 .insert("hostname".into(), Inode::file("hostname", "kpawnd"));
             etc.children.insert(
                 "github".into(),
-                Inode::file("github", "https://www.github.com/kpawnd"),
+                Inode::file("github", "https://github.com/kpawnd"),
             );
         }
         if let Some(home) = self.root.children.get_mut("home") {
