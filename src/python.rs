@@ -6,7 +6,11 @@ pub struct PythonInterpreter {
     output: Vec<String>,
 }
 
-impl Default for PythonInterpreter { fn default() -> Self { Self::new() } }
+impl Default for PythonInterpreter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum PythonValue {

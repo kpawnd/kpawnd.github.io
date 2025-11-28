@@ -19,7 +19,11 @@ pub struct ProcessTable {
     next_pid: u32,
     procs: HashMap<u32, Process>,
 }
-impl Default for ProcessTable { fn default() -> Self { Self::new() } }
+impl Default for ProcessTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl ProcessTable {
     pub fn new() -> Self {
         ProcessTable {
@@ -58,7 +62,11 @@ pub struct Scheduler {
     run_queue: Vec<u32>,
     cursor: usize,
 }
-impl Default for Scheduler { fn default() -> Self { Self::new() } }
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl Scheduler {
     pub fn new() -> Self {
         Scheduler {

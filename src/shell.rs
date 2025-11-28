@@ -7,7 +7,11 @@ pub enum ProgramKind {
 pub struct ProgramRegistry {
     progs: BTreeMap<String, ProgramKind>,
 }
-impl Default for ProgramRegistry { fn default() -> Self { Self::new() } }
+impl Default for ProgramRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl ProgramRegistry {
     pub fn new() -> Self {
         let mut r = ProgramRegistry {
@@ -32,7 +36,11 @@ pub struct Shell {
     pub env: HashMap<String, String>,
     pub registry: ProgramRegistry,
 }
-impl Default for Shell { fn default() -> Self { Self::new() } }
+impl Default for Shell {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl Shell {
     pub fn new() -> Self {
         let mut env = HashMap::new();

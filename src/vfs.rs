@@ -39,7 +39,11 @@ pub struct Vfs {
     handles: HashMap<u32, VfsHandle>,
     next_handle: u32,
 }
-impl Default for Vfs { fn default() -> Self { Self::new() } }
+impl Default for Vfs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl Vfs {
     pub fn new() -> Self {
         Vfs {

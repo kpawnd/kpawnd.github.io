@@ -8,7 +8,9 @@ pub struct GrubMenu {
 }
 
 impl Default for GrubMenu {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[wasm_bindgen]

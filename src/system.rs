@@ -17,7 +17,11 @@ pub struct System {
     in_python_repl: bool,
 }
 
-impl Default for System { fn default() -> Self { Self::new() } }
+impl Default for System {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[wasm_bindgen]
 impl System {
