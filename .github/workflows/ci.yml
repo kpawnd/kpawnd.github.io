@@ -10,6 +10,10 @@ on:
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,32 +54,26 @@ jobs:
       - name: Tests
         run: cargo test --quiet
 
-      - name: Upload pkg artifact
+      - name: Upload pkg artifact (debug)
         uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg
           path: pkg/
           retention-days: 7
 
-  # Optional deployment job (commented out). Uncomment if you want GitHub Pages via Actions instead of root repo hosting.
-  # deploy:
-  #   needs: build-wasm
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     pages: write
-  #     id-token: write
-  #   steps:
-  #     - name: Download artifact
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: wasm-pkg
-  #     - name: Prepare site
-  #       run: |
-  #         ls -R
-  #     - name: Upload pages artifact
-  #       uses: actions/upload-pages-artifact@v3
-  #       with:
-  #         path: .
-  #   environment:
-  #     name: github-pages
-  #     url: ${{ steps.deploy.outputs.page_url }}
+      - name: Upload Pages artifact (full site)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+  deploy:
+    needs: build-wasm
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
