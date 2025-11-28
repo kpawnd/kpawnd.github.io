@@ -7,6 +7,10 @@ pub struct GrubMenu {
     entries: Vec<String>,
 }
 
+impl Default for GrubMenu {
+    fn default() -> Self { Self::new() }
+}
+
 #[wasm_bindgen]
 impl GrubMenu {
     #[wasm_bindgen(constructor)]

@@ -24,6 +24,8 @@ pub struct Kernel {
     pub scheduler: Scheduler,
 }
 
+impl Default for Kernel { fn default() -> Self { Self::new() } }
+
 impl Kernel {
     pub fn new() -> Self {
         Kernel {

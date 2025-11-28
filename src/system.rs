@@ -17,6 +17,8 @@ pub struct System {
     in_python_repl: bool,
 }
 
+impl Default for System { fn default() -> Self { Self::new() } }
+
 #[wasm_bindgen]
 impl System {
     #[wasm_bindgen(constructor)]
@@ -84,7 +86,7 @@ impl System {
             "echo" => { let out=args.join(" "); if out=="github" { format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap()) } else { out } }
             "help" => "cat cd clear echo exit help hostname id ls mkdir neofetch ps pwd rm touch uname uptime free env export kill history python".into(),
             "neofetch" => "\x1b[NEOFETCH_DATA]".to_string(),
-            "python" => { if args.is_empty() { self.start_python_repl() } else { format!("python: script execution not supported") } }
+            "python" => { if args.is_empty() { self.start_python_repl() } else { "python: script execution not supported".to_string() } }
             "ls" => self.cmd_ls(args),
             "cd" => self.cmd_cd(args),
             "pwd" => self.kernel.fs.cwd.clone(),
@@ -111,7 +113,7 @@ impl System {
     }
 
     fn cmd_ls(&self, args: &[&str]) -> String {
-        let path = args.get(0).unwrap_or(&".");
+        let path = args.first().unwrap_or(&".");
         match self.kernel.fs.resolve(path) {
             Some(node) if node.is_dir => {
                 let mut names: Vec<_> = node.children.keys().collect();
@@ -127,7 +129,7 @@ impl System {
         }
     }
     fn cmd_cd(&mut self, args: &[&str]) -> String {
-        let target = args.get(0).unwrap_or(&"/");
+        let target = args.first().unwrap_or(&"/");
         match self.kernel.fs.cd(target) {
             Ok(()) => String::new(),
             Err(e) => format!("cd: {}: {}", target, e),

@@ -2,6 +2,7 @@ pub struct Memory {
     pub total: u32,
     pub free: u32,
 }
+impl Default for Memory { fn default() -> Self { Memory::new(0) } }
 impl Memory {
     pub fn new(total: u32) -> Self {
         Memory { total, free: total }

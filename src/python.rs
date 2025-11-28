@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 pub struct PythonInterpreter {
     globals: HashMap<String, PythonValue>,
@@ -15,17 +16,17 @@ pub enum PythonValue {
     List(Vec<PythonValue>),
 }
 
-impl PythonValue {
-    pub fn to_string(&self) -> String {
+impl fmt::Display for PythonValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PythonValue::Int(i) => i.to_string(),
-            PythonValue::Float(f) => f.to_string(),
-            PythonValue::String(s) => s.clone(),
-            PythonValue::Bool(b) => if *b { "True" } else { "False" }.to_string(),
-            PythonValue::None => "None".to_string(),
+            PythonValue::Int(i) => write!(f, "{}", i),
+            PythonValue::Float(fl) => write!(f, "{}", fl),
+            PythonValue::String(s) => write!(f, "{}", s),
+            PythonValue::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
+            PythonValue::None => write!(f, "None"),
             PythonValue::List(items) => {
                 let strs: Vec<String> = items.iter().map(|v| v.to_string()).collect();
-                format!("[{}]", strs.join(", "))
+                write!(f, "[{}]", strs.join(", "))
             }
         }
     }
@@ -38,6 +39,8 @@ impl PythonInterpreter {
             output: Vec::new(),
         }
     }
+
+    pub fn eval(&mut self, code: &str) -> Result<String, String> {
 
     pub fn eval(&mut self, code: &str) -> Result<String, String> {
         // Security: Block dangerous operations
