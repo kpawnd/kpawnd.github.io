@@ -228,7 +228,12 @@ function handleCommand(cmd) {
     print('Type "exit()" to exit', 'info');
     document.getElementById('prompt').textContent = '>>> ';
   }
-  else if (result.startsWith('\x1b[OPEN:')) { const url = result.slice(8, -1); window.open(url,'_blank'); }
+  else if (result.startsWith('\x1b[OPEN:')) {
+    // Prefix '\x1b[OPEN:' length is 7 chars; previous 8 caused missing first character (dropping 'h' in https)
+    const prefixLen = '\x1b[OPEN:'.length; // 7
+    const url = result.slice(prefixLen, -1);
+    window.open(url,'_blank');
+  }
   else if (result) { print(result, 'output'); }
   if (!pythonRepl) {
     document.getElementById('prompt').textContent = system.prompt();
