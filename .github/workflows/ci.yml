@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install wasm-pack
+        run: |
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer.sh | sh
+
+      - name: Build WASM (release)
+        run: |
+          wasm-pack build --release --target web --out-dir pkg
+
+      - name: Format check
+        run: cargo fmt -- --check
+
+      - name: Clippy lint
+        run: cargo clippy -- -D warnings
+
+      - name: Cargo check
+        run: cargo check
+
+      - name: Tests
+        run: cargo test --quiet
+
+      - name: Upload pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: pkg/
+          retention-days: 7
+
+  # Optional deployment job (commented out). Uncomment if you want GitHub Pages via Actions instead of root repo hosting.
+  # deploy:
+  #   needs: build-wasm
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     pages: write
+  #     id-token: write
+  #   steps:
+  #     - name: Download artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: wasm-pkg
+  #     - name: Prepare site
+  #       run: |
+  #         ls -R
+  #     - name: Upload pages artifact
+  #       uses: actions/upload-pages-artifact@v3
+  #       with:
+  #         path: .
+  #   environment:
+  #     name: github-pages
+  #     url: ${{ steps.deploy.outputs.page_url }}
