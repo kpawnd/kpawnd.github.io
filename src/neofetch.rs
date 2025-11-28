@@ -154,10 +154,18 @@ pub fn neofetch_logo(os: &str) -> String {
     logo.lines.join("\n")
 }
 
-pub fn format_neofetch(os: &str, kernel: &str, browser: &str, cpu: &str, memory: &str, resolution: &str, uptime: &str) -> String {
+pub fn format_neofetch(
+    os: &str,
+    kernel: &str,
+    browser: &str,
+    cpu: &str,
+    memory: &str,
+    resolution: &str,
+    uptime: &str,
+) -> String {
     let logo = get_logo(os);
     let mut output = String::new();
-    
+
     let info_lines = vec![
         format!("root@localhost"),
         format!("─────────────"),
@@ -171,17 +179,20 @@ pub fn format_neofetch(os: &str, kernel: &str, browser: &str, cpu: &str, memory:
         format!("CPU: {}", cpu),
         format!("Memory: {}", memory),
     ];
-    
+
     let max_logo_width = logo.lines.iter().map(|l| l.len()).max().unwrap_or(0);
-    
+
     let empty_string = String::new();
     for i in 0..logo.lines.len().max(info_lines.len()) {
         let logo_line = logo.lines.get(i).unwrap_or(&"");
         let info_line = info_lines.get(i).unwrap_or(&empty_string);
         let padding = " ".repeat(max_logo_width - strip_color_tokens(logo_line).len() + 3);
-        output.push_str(&format!("\x1b[COLOR:{}]{}{}{}\n", logo.color, logo_line, padding, info_line));
+        output.push_str(&format!(
+            "\x1b[COLOR:{}]{}{}{}\n",
+            logo.color, logo_line, padding, info_line
+        ));
     }
-    
+
     output
 }
 
@@ -191,7 +202,8 @@ fn strip_color_tokens(s: &str) -> String {
     let mut i = 0;
     let bytes = s.as_bytes();
     while i < bytes.len() {
-        if bytes[i] == 0x1b { // ESC
+        if bytes[i] == 0x1b {
+            // ESC
             // Look for pattern \x1b[COLOR:#......]
             if let Some(rest) = s.get(i..) {
                 if rest.starts_with("\x1b[COLOR:#") {

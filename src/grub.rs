@@ -27,26 +27,33 @@ impl GrubMenu {
         let mut output = String::new();
         output.push_str("                         GNU GRUB  version 2.06\n\n");
         output.push_str("   ┌──────────────────────────────────────────────────────────────┐\n");
-        
+
         for (i, entry) in self.entries.iter().enumerate() {
             if i == self.selected {
-                output.push_str(&format!("   │ \x1b[HIGHLIGHT]{}\x1b[NORMAL]{} │\n", 
-                    entry, 
-                    " ".repeat(60 - entry.len())));
+                output.push_str(&format!(
+                    "   │ \x1b[HIGHLIGHT]{}\x1b[NORMAL]{} │\n",
+                    entry,
+                    " ".repeat(60 - entry.len())
+                ));
             } else {
-                output.push_str(&format!("   │  {}{} │\n", 
-                    entry, 
-                    " ".repeat(59 - entry.len())));
+                output.push_str(&format!(
+                    "   │  {}{} │\n",
+                    entry,
+                    " ".repeat(59 - entry.len())
+                ));
             }
         }
-        
+
         output.push_str("   │                                                              │\n");
         output.push_str("   └──────────────────────────────────────────────────────────────┘\n\n");
         output.push_str("      Use the ↑ and ↓ keys to select which entry is highlighted.\n");
         output.push_str("      Press enter to boot the selected OS, 'e' to edit the\n");
         output.push_str("      commands before booting or 'c' for a command-line.\n\n");
-        output.push_str(&format!("   The highlighted entry will be executed automatically in {}s.", self.timer));
-        
+        output.push_str(&format!(
+            "   The highlighted entry will be executed automatically in {}s.",
+            self.timer
+        ));
+
         output
     }
 
@@ -117,7 +124,10 @@ impl Memtest {
 
     #[wasm_bindgen]
     pub fn get_header(&self) -> String {
-        format!("Memtest86+ v5.01\n\nTesting {}MB of memory\n", self.total_mem)
+        format!(
+            "Memtest86+ v5.01\n\nTesting {}MB of memory\n",
+            self.total_mem
+        )
     }
 
     #[wasm_bindgen]
@@ -141,12 +151,14 @@ impl Memtest {
         let filled = (self.progress / 5) as usize;
         let empty = bar_length - filled;
         let progress_bar = format!("{}{}", "=".repeat(filled), " ".repeat(empty));
-        
-        format!("Test {}: {} [{}] {}%", 
-            self.current_test + 1, 
-            test_name, 
-            progress_bar, 
-            self.progress)
+
+        format!(
+            "Test {}: {} [{}] {}%",
+            self.current_test + 1,
+            test_name,
+            progress_bar,
+            self.progress
+        )
     }
 
     #[wasm_bindgen]
