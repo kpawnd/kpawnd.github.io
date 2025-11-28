@@ -6,6 +6,8 @@ pub struct PythonInterpreter {
     output: Vec<String>,
 }
 
+impl Default for PythonInterpreter { fn default() -> Self { Self::new() } }
+
 #[derive(Debug, Clone)]
 pub enum PythonValue {
     Int(i64),
@@ -39,8 +41,6 @@ impl PythonInterpreter {
             output: Vec::new(),
         }
     }
-
-    pub fn eval(&mut self, code: &str) -> Result<String, String> {
 
     pub fn eval(&mut self, code: &str) -> Result<String, String> {
         // Security: Block dangerous operations
