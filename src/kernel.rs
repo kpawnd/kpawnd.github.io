@@ -86,7 +86,7 @@ impl Kernel {
         self.klog("init", &format!("pid {}", init_pid));
         self.ticks += 1;
         let sh_pid = self.proc.spawn("sh", init_pid);
-        self.scheduler.add(sh_pid);
+        self.scheduler.add(sh_pid, crate::process::Priority::Normal);
         self.klog("init", &format!("spawn sh pid {}", sh_pid));
         self.ticks += 1;
         self.state = KernelState::Run;

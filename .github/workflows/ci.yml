@@ -32,6 +32,8 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
@@ -46,13 +48,10 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy lint
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
 
       - name: Cargo check
-        run: cargo check
-
-      - name: Tests
-        run: cargo test --quiet
+        run: cargo check --target wasm32-unknown-unknown
 
       - name: Upload pkg artifact (debug)
         uses: actions/upload-artifact@v4

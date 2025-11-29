@@ -1,5 +1,5 @@
-import init, { System, GrubMenu, neofetch_logo } from './pkg/terminal_os.js';
-import { Memtest } from './pkg/terminal_os.js';
+import init, { System, GrubMenu, neofetch_logo, Memtest, start_doom, start_screensaver, fetch_http, curl_request, ping_request, dns_lookup, get_public_ip, start_idle_timer } from './pkg/terminal_os.js';
+
 let system;
 let pythonRepl = null;
 let grubMenu = null;
@@ -8,6 +8,9 @@ let terminalSetup = false;
 let commandHistory = [];
 let historyIndex = -1;
 let memtest = null;
+// Idle timer now handled in Rust.
+
+// Rust now owns graphics/game loops; minimal JS only.
 
 async function main() {
   try {
@@ -215,6 +218,8 @@ function handleCommand(cmd) {
     print(`${promptText}${cmd}`, 'command');
   }
   const result = system.exec(cmd);
+  
+  // Handle escape sequences
   if (result === '\x1b[CLEAR]') { 
     document.getElementById('output').innerHTML = ''; 
   }
@@ -228,10 +233,37 @@ function handleCommand(cmd) {
     print('Type "exit()" to exit', 'info');
     document.getElementById('prompt').textContent = '>>> ';
   }
+  else if (result.startsWith('\x1b[LAUNCH_DOOM]') || result.startsWith('\x1b[LAUNCH_SNAKE]')) {
+    launchDoomGame();
+  }
+  else if (result.startsWith('\x1b[LAUNCH_SCREENSAVER]')) {
+    launchScreensaver();
+  }
+  else if (result.startsWith('\x1b[FETCH:')) {
+    const url = result.slice('\x1b[FETCH:'.length, -1);
+    fetchUrl(url);
+  }
+  else if (result.startsWith('\x1b[CURL:')) {
+    // Format: \x1b[CURL:method:showHeaders:url]
+    const parts = result.slice('\x1b[CURL:'.length, -1).split(':');
+    const method = parts[0] || 'GET';
+    const showHeaders = parts[1] === 'true';
+    const url = parts.slice(2).join(':'); // Rejoin in case URL has colons
+    doCurl(url, method, showHeaders);
+  }
+  else if (result.startsWith('\x1b[PING:')) {
+    const host = result.slice('\x1b[PING:'.length, -1);
+    doPing(host);
+  }
+  else if (result.startsWith('\x1b[DNS:')) {
+    const host = result.slice('\x1b[DNS:'.length, -1);
+    doDns(host);
+  }
+  else if (result.startsWith('\x1b[MYIP]')) {
+    doMyIp();
+  }
   else if (result.startsWith('\x1b[OPEN:')) {
-    // Prefix '\x1b[OPEN:' length is 7 chars; previous 8 caused missing first character (dropping 'h' in https)
-    const prefixLen = '\x1b[OPEN:'.length; // 7
-    const url = result.slice(prefixLen, -1);
+    const url = result.slice('\x1b[OPEN:'.length, -1);
     window.open(url,'_blank');
   }
   else if (result) { print(result, 'output'); }
@@ -384,6 +416,91 @@ async function displayNeofetch() {
   scrollToBottom();
 }
 
+function launchDoomGame() { start_doom(); }
+function launchScreensaver() { start_screensaver(); }
 
+async function fetchUrl(url) {
+  print(`Fetching ${url}...`, 'info');
+  try {
+    const response = await fetch_http(url);
+    print(response, 'output');
+  } catch (e) {
+    print(`Error: ${e.message || e}`, 'error');
+  }
+  scrollToBottom();
+}
 
+async function doCurl(url, method, showHeaders) {
+  print(`* Connecting to ${url}...`, 'info');
+  try {
+    const response = await curl_request(url, method, showHeaders);
+    // Split by newlines and print each line
+    response.split('\n').forEach(line => print(line, 'output'));
+  } catch (e) {
+    print(`curl: (7) Failed to connect: ${e.message || e}`, 'error');
+  }
+  scrollToBottom();
+}
+
+async function doPing(host) {
+  // Construct URL for ping (use HTTPS for CORS)
+  let url = host;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://${host}`;
+  }
+  
+  print(`PING ${host}`, 'info');
+  
+  const results = [];
+  for (let i = 0; i < 4; i++) {
+    try {
+      const result = await ping_request(url);
+      print(`seq=${i + 1}: ${result}`, 'output');
+      // Extract time from result
+      const match = result.match(/time=([0-9.]+)ms/);
+      if (match) results.push(parseFloat(match[1]));
+    } catch (e) {
+      print(`seq=${i + 1}: timeout`, 'error');
+    }
+    // Small delay between pings
+    await new Promise(r => setTimeout(r, 200));
+  }
+  
+  if (results.length > 0) {
+    const min = Math.min(...results).toFixed(1);
+    const max = Math.max(...results).toFixed(1);
+    const avg = (results.reduce((a, b) => a + b, 0) / results.length).toFixed(1);
+    print(`\n--- ${host} ping statistics ---`, 'info');
+    print(`4 packets transmitted, ${results.length} received, ${((4-results.length)/4*100).toFixed(0)}% packet loss`, 'output');
+    print(`rtt min/avg/max = ${min}/${avg}/${max} ms`, 'output');
+  }
+  scrollToBottom();
+}
+
+async function doDns(host) {
+  print(`; <<>> DiG 9.18.0 <<>> ${host}`, 'info');
+  print(`;; Using DNS-over-HTTPS (Cloudflare)`, 'info');
+  print('', 'output');
+  try {
+    const result = await dns_lookup(host);
+    print(`;; ANSWER SECTION:`, 'info');
+    result.split('\n').filter(l => l).forEach(line => print(line, 'output'));
+  } catch (e) {
+    print(`DNS lookup failed: ${e.message || e}`, 'error');
+  }
+  scrollToBottom();
+}
+
+async function doMyIp() {
+  try {
+    const ip = await get_public_ip();
+    print(`${ip}`, 'output');
+  } catch (e) {
+    print(`Failed to get IP: ${e.message || e}`, 'error');
+  }
+  scrollToBottom();
+}
 main();
+
+// Initialize idle timer after setup
+setTimeout(() => { start_idle_timer(60000); }, 1000);

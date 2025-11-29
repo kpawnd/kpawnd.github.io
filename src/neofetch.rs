@@ -166,14 +166,14 @@ pub fn format_neofetch(
     let logo = get_logo(os);
     let mut output = String::new();
 
-    let info_lines = vec![
-        format!("root@localhost"),
-        format!("─────────────"),
+    let info_lines = [
+        "root@localhost".to_string(),
+        "─────────────".to_string(),
         format!("OS: {}", os),
         format!("Host: {}", browser),
         format!("Kernel: {}", kernel),
         format!("Uptime: {}", uptime),
-        format!("Shell: kpawnd-sh"),
+        "Shell: kpawnd-sh".to_string(),
         format!("Resolution: {}", resolution),
         format!("Terminal: {}", browser),
         format!("CPU: {}", cpu),
