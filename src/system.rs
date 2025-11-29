@@ -415,17 +415,18 @@ impl System {
         if args.is_empty() {
             return "usage: ping <host>".to_string();
         }
-        
+
         // Get the host (last non-flag argument)
-        let host = args.iter()
+        let host = args
+            .iter()
             .filter(|a| !a.starts_with('-'))
             .next_back()
             .unwrap_or(&"");
-        
+
         if host.is_empty() {
             return "ping: missing host operand".to_string();
         }
-        
+
         // Return escape sequence for real ping
         format!("\x1b[PING:{}]", host)
     }
@@ -436,7 +437,7 @@ impl System {
         }
 
         let hostname = args.last().unwrap_or(&"");
-        
+
         // Return escape sequence for real DNS lookup
         format!("\x1b[DNS:{}]", hostname)
     }

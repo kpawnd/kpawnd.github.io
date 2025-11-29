@@ -474,7 +474,7 @@ pub async fn post_http(url: &str, body: &str) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub async fn curl_request(url: &str, method: &str, show_headers: bool) -> Result<String, JsValue> {
     let start = js_sys::Date::now();
-    
+
     let opts = RequestInit::new();
     opts.set_method(method);
     opts.set_mode(RequestMode::Cors);
@@ -494,12 +494,12 @@ pub async fn curl_request(url: &str, method: &str, show_headers: bool) -> Result
     let elapsed = js_sys::Date::now() - start;
     let status = resp.status();
     let status_text = resp.status_text();
-    
+
     let mut output = String::new();
-    
+
     if show_headers {
         output.push_str(&format!("HTTP/1.1 {} {}\n", status, status_text));
-        
+
         // Get headers
         let headers = resp.headers();
         if let Ok(Some(ct)) = headers.get("content-type") {
@@ -514,16 +514,17 @@ pub async fn curl_request(url: &str, method: &str, show_headers: bool) -> Result
         output.push_str(&format!("\n* Request completed in {:.0}ms\n", elapsed));
     } else {
         let text = JsFuture::from(
-            resp.text().map_err(|e| JsValue::from_str(&format!("curl: {:?}", e)))?
+            resp.text()
+                .map_err(|e| JsValue::from_str(&format!("curl: {:?}", e)))?,
         )
         .await
         .map_err(|e| JsValue::from_str(&format!("curl: {:?}", e)))?;
-        
+
         if let Some(body) = text.as_string() {
             output.push_str(&body);
         }
     }
-    
+
     Ok(output)
 }
 
@@ -531,7 +532,7 @@ pub async fn curl_request(url: &str, method: &str, show_headers: bool) -> Result
 #[wasm_bindgen]
 pub async fn ping_request(url: &str) -> Result<String, JsValue> {
     let start = js_sys::Date::now();
-    
+
     let opts = RequestInit::new();
     opts.set_method("HEAD");
     opts.set_mode(RequestMode::Cors);
@@ -540,7 +541,7 @@ pub async fn ping_request(url: &str) -> Result<String, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("ping: {:?}", e)))?;
 
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
-    
+
     match JsFuture::from(window.fetch_with_request(&request)).await {
         Ok(resp_value) => {
             let elapsed = js_sys::Date::now() - start;
@@ -564,15 +565,16 @@ pub async fn dns_lookup(hostname: &str) -> Result<String, JsValue> {
         "https://cloudflare-dns.com/dns-query?name={}&type=A",
         hostname
     );
-    
+
     let opts = RequestInit::new();
     opts.set_method("GET");
     opts.set_mode(RequestMode::Cors);
 
     let request = Request::new_with_str_and_init(&url, &opts)
         .map_err(|e| JsValue::from_str(&format!("DNS error: {:?}", e)))?;
-    
-    request.headers()
+
+    request
+        .headers()
         .set("Accept", "application/dns-json")
         .map_err(|e| JsValue::from_str(&format!("DNS error: {:?}", e)))?;
 
@@ -586,14 +588,15 @@ pub async fn dns_lookup(hostname: &str) -> Result<String, JsValue> {
         .map_err(|_| JsValue::from_str("Invalid DNS response"))?;
 
     let json = JsFuture::from(
-        resp.json().map_err(|e| JsValue::from_str(&format!("DNS error: {:?}", e)))?
+        resp.json()
+            .map_err(|e| JsValue::from_str(&format!("DNS error: {:?}", e)))?,
     )
     .await
     .map_err(|e| JsValue::from_str(&format!("DNS parse error: {:?}", e)))?;
 
     // Parse the JSON response
     let mut output = String::new();
-    
+
     if let Ok(answers) = js_sys::Reflect::get(&json, &JsValue::from_str("Answer")) {
         if let Some(arr) = answers.dyn_ref::<js_sys::Array>() {
             for i in 0..arr.length() {
@@ -614,7 +617,7 @@ pub async fn dns_lookup(hostname: &str) -> Result<String, JsValue> {
                         .ok()
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.0) as u32;
-                    
+
                     let type_str = match rtype {
                         1 => "A",
                         28 => "AAAA",
@@ -623,17 +626,20 @@ pub async fn dns_lookup(hostname: &str) -> Result<String, JsValue> {
                         16 => "TXT",
                         _ => "UNKNOWN",
                     };
-                    
-                    output.push_str(&format!("{} has {} record {} (TTL: {})\n", name, type_str, data, ttl));
+
+                    output.push_str(&format!(
+                        "{} has {} record {} (TTL: {})\n",
+                        name, type_str, data, ttl
+                    ));
                 }
             }
         }
     }
-    
+
     if output.is_empty() {
         output = format!("No DNS records found for {}", hostname);
     }
-    
+
     Ok(output)
 }
 
@@ -641,7 +647,7 @@ pub async fn dns_lookup(hostname: &str) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub async fn get_public_ip() -> Result<String, JsValue> {
     let url = "https://api.ipify.org?format=json";
-    
+
     let opts = RequestInit::new();
     opts.set_method("GET");
     opts.set_mode(RequestMode::Cors);
@@ -659,7 +665,8 @@ pub async fn get_public_ip() -> Result<String, JsValue> {
         .map_err(|_| JsValue::from_str("Invalid response"))?;
 
     let json = JsFuture::from(
-        resp.json().map_err(|e| JsValue::from_str(&format!("Error: {:?}", e)))?
+        resp.json()
+            .map_err(|e| JsValue::from_str(&format!("Error: {:?}", e)))?,
     )
     .await
     .map_err(|e| JsValue::from_str(&format!("Parse error: {:?}", e)))?;
@@ -668,6 +675,6 @@ pub async fn get_public_ip() -> Result<String, JsValue> {
         .ok()
         .and_then(|v| v.as_string())
         .unwrap_or_else(|| "Unknown".to_string());
-    
+
     Ok(ip)
 }
