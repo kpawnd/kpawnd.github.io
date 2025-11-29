@@ -470,7 +470,6 @@ pub async fn post_http(url: &str, body: &str) -> Result<String, JsValue> {
         .map_err(|e| JsValue::from_str(&e))
 }
 
-/// Real HTTP request with timing and headers (curl-like)
 #[wasm_bindgen]
 pub async fn curl_request(url: &str, method: &str, show_headers: bool) -> Result<String, JsValue> {
     let start = js_sys::Date::now();
@@ -528,14 +527,14 @@ pub async fn curl_request(url: &str, method: &str, show_headers: bool) -> Result
     Ok(output)
 }
 
-/// Real ping using HTTP HEAD request with timing
+/// no-cors mode for compatibility
 #[wasm_bindgen]
 pub async fn ping_request(url: &str) -> Result<String, JsValue> {
     let start = js_sys::Date::now();
 
     let opts = RequestInit::new();
-    opts.set_method("HEAD");
-    opts.set_mode(RequestMode::Cors);
+    opts.set_method("GET");
+    opts.set_mode(RequestMode::NoCors); // Use no-cors for ping
 
     let request = Request::new_with_str_and_init(url, &opts)
         .map_err(|e| JsValue::from_str(&format!("ping: {:?}", e)))?;
@@ -543,13 +542,10 @@ pub async fn ping_request(url: &str) -> Result<String, JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window"))?;
 
     match JsFuture::from(window.fetch_with_request(&request)).await {
-        Ok(resp_value) => {
+        Ok(_) => {
+            // With no-cors we get an opaque response but timing is still valid
             let elapsed = js_sys::Date::now() - start;
-            let resp: Response = resp_value
-                .dyn_into()
-                .map_err(|_| JsValue::from_str("Invalid response"))?;
-            let status = resp.status();
-            Ok(format!("time={:.1}ms status={}", elapsed, status))
+            Ok(format!("time={:.1}ms", elapsed))
         }
         Err(_) => {
             let elapsed = js_sys::Date::now() - start;

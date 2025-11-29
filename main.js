@@ -212,7 +212,7 @@ function setupTerminal() {
   input.focus();
 }
 
-function handleCommand(cmd) {
+async function handleCommand(cmd) {
   const promptText = system.prompt();
   if (cmd.trim() !== 'clear') {
     print(`${promptText}${cmd}`, 'command');
@@ -249,18 +249,18 @@ function handleCommand(cmd) {
     const method = parts[0] || 'GET';
     const showHeaders = parts[1] === 'true';
     const url = parts.slice(2).join(':'); // Rejoin in case URL has colons
-    doCurl(url, method, showHeaders);
+    await doCurl(url, method, showHeaders);
   }
   else if (result.startsWith('\x1b[PING:')) {
     const host = result.slice('\x1b[PING:'.length, -1);
-    doPing(host);
+    await doPing(host);
   }
   else if (result.startsWith('\x1b[DNS:')) {
     const host = result.slice('\x1b[DNS:'.length, -1);
-    doDns(host);
+    await doDns(host);
   }
   else if (result.startsWith('\x1b[MYIP]')) {
-    doMyIp();
+    await doMyIp();
   }
   else if (result.startsWith('\x1b[OPEN:')) {
     const url = result.slice('\x1b[OPEN:'.length, -1);
