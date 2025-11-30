@@ -655,7 +655,10 @@ impl Vfs {
             );
             root_home.children.insert(
                 ".vimrc".into(),
-                Inode::file(".vimrc", "\" Vim configuration for root\nsyntax on\nset number\n"),
+                Inode::file(
+                    ".vimrc",
+                    "\" Vim configuration for root\nsyntax on\nset number\n",
+                ),
             );
             root_home.children.insert(
                 "README".into(),
@@ -872,8 +875,12 @@ impl Vfs {
             // Collect child paths to avoid borrow issues
             let mut child_paths: Vec<String> = Vec::new();
             if let Some(current) = self.resolve(&norm) {
-                for (name, _) in &current.children {
-                    let child = if norm == "/" { format!("/{}", name) } else { format!("{}/{}", norm, name) };
+                for name in current.children.keys() {
+                    let child = if norm == "/" {
+                        format!("/{}", name)
+                    } else {
+                        format!("{}/{}", norm, name)
+                    };
                     child_paths.push(child);
                 }
             }

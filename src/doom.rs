@@ -252,7 +252,7 @@ impl DoomGame {
 
     fn update(&mut self, dt: f64) -> bool {
         type ParticleSpawn = (Vec2, Vec2, (u8, u8, u8), f64);
-        
+
         self.game_time += dt;
 
         // Day/night cycle (full cycle every 120 seconds)
