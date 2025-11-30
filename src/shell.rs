@@ -58,7 +58,11 @@ impl Shell {
 
 pub fn prompt(kernel: &Kernel, user: &str, home: &str) -> String {
     let cwd = &kernel.fs.cwd;
-    let home_prefix = if let Some(stripped) = home.strip_suffix('/') { stripped } else { home };
+    let home_prefix = if let Some(stripped) = home.strip_suffix('/') {
+        stripped
+    } else {
+        home
+    };
     let display = if cwd == home_prefix {
         "~".to_string()
     } else if let Some(rest) = cwd.strip_prefix(&(home_prefix.to_string() + "/")) {

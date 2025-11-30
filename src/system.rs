@@ -125,10 +125,11 @@ impl System {
             }
             // Check if we have a valid cached sudo session (5 minute timeout)
             let now = js_sys::Date::now();
-            let is_authenticated = self.sudo_authenticated_until
+            let is_authenticated = self
+                .sudo_authenticated_until
                 .map(|until| now < until)
                 .unwrap_or(false);
-            
+
             if is_authenticated {
                 // Execute directly without password prompt
                 return self.exec_sudo_internal(&args.join(" "));
@@ -136,7 +137,10 @@ impl System {
                 // Need password
                 self.sudo_pending_cmd = Some(args.join(" "));
                 self.sudo_waiting_password = true;
-                return format!("[sudo] password for {}:", self.shell.env.get("USER").unwrap_or(&"user".to_string()));
+                return format!(
+                    "[sudo] password for {}:",
+                    self.shell.env.get("USER").unwrap_or(&"user".to_string())
+                );
             }
         }
         if self.shell.registry.has(cmd) {
@@ -242,8 +246,18 @@ impl System {
     }
 
     fn exec_sudo_internal(&mut self, cmd: &str) -> String {
-        let old_user = self.shell.env.get("USER").cloned().unwrap_or_else(|| "user".into());
-        let old_home = self.shell.env.get("HOME").cloned().unwrap_or_else(|| "/home/user".into());
+        let old_user = self
+            .shell
+            .env
+            .get("USER")
+            .cloned()
+            .unwrap_or_else(|| "user".into());
+        let old_home = self
+            .shell
+            .env
+            .get("HOME")
+            .cloned()
+            .unwrap_or_else(|| "/home/user".into());
         let old_owner = self.kernel.fs.get_default_owner();
         let old_group = self.kernel.fs.get_default_group();
 
@@ -373,7 +387,11 @@ impl System {
             .get("HOME")
             .cloned()
             .unwrap_or_else(|| "/home/user".into());
-        let target = if args.is_empty() { default_home.as_str() } else { args[0] };
+        let target = if args.is_empty() {
+            default_home.as_str()
+        } else {
+            args[0]
+        };
         match self.kernel.fs.cd(target) {
             Ok(()) => String::new(),
             Err(e) => format!("cd: {}: {}", target, e),
@@ -392,7 +410,11 @@ impl System {
 
     #[wasm_bindgen]
     pub fn set_user(&mut self, username: &str) {
-        let uname = if username.is_empty() { "user" } else { username };
+        let uname = if username.is_empty() {
+            "user"
+        } else {
+            username
+        };
         self.shell.env.insert("USER".into(), uname.into());
         let home = format!("/home/{}", uname);
         self.shell.env.insert("HOME".into(), home.clone());
@@ -431,7 +453,10 @@ impl System {
         for arg in args {
             match *arg {
                 "-f" | "--force" => force = true,
-                "-r" | "-rf" | "-fr" => { recursive = true; force = true; },
+                "-r" | "-rf" | "-fr" => {
+                    recursive = true;
+                    force = true;
+                }
                 other => files.push(other),
             }
         }
@@ -441,9 +466,17 @@ impl System {
         }
 
         for file in files {
-            if recursive { self.kernel.fs.set_ignore_critical_deletes(true); }
-            let res = if recursive { self.kernel.fs.remove_recursive(file) } else { self.kernel.fs.remove(file) };
-            if recursive { self.kernel.fs.set_ignore_critical_deletes(false); }
+            if recursive {
+                self.kernel.fs.set_ignore_critical_deletes(true);
+            }
+            let res = if recursive {
+                self.kernel.fs.remove_recursive(file)
+            } else {
+                self.kernel.fs.remove(file)
+            };
+            if recursive {
+                self.kernel.fs.set_ignore_critical_deletes(false);
+            }
             match res {
                 Ok(()) => {}
                 Err(e) => {
@@ -495,7 +528,7 @@ impl System {
         if let Some(node) = self.kernel.fs.resolve(path) {
             results.push(path.to_string());
             if node.is_dir {
-                for (name, _) in &node.children {
+                for name in node.children.keys() {
                     let child_path = if path == "/" {
                         format!("/{}", name)
                     } else {
@@ -527,17 +560,15 @@ impl System {
         let (n, file) = if args.len() >= 2 && args[0] == "-n" {
             (args[1].parse().unwrap_or(10), args.get(2).copied())
         } else {
-            (10, args.get(0).copied())
+            (10, args.first().copied())
         };
-        
+
         if file.is_none() {
             return "usage: head [-n lines] [file]".into();
         }
-        
+
         match self.kernel.fs.resolve(file.unwrap()) {
-            Some(node) if !node.is_dir => {
-                node.data.lines().take(n).collect::<Vec<_>>().join("\n")
-            }
+            Some(node) if !node.is_dir => node.data.lines().take(n).collect::<Vec<_>>().join("\n"),
             Some(_) => format!("head: {}: Is a directory", file.unwrap()),
             None => format!("head: {}: No such file or directory", file.unwrap()),
         }
@@ -547,13 +578,13 @@ impl System {
         let (n, file) = if args.len() >= 2 && args[0] == "-n" {
             (args[1].parse().unwrap_or(10), args.get(2).copied())
         } else {
-            (10, args.get(0).copied())
+            (10, args.first().copied())
         };
-        
+
         if file.is_none() {
             return "usage: tail [-n lines] [file]".into();
         }
-        
+
         match self.kernel.fs.resolve(file.unwrap()) {
             Some(node) if !node.is_dir => {
                 let lines: Vec<&str> = node.data.lines().collect();
@@ -571,7 +602,7 @@ impl System {
         }
         let file1 = self.kernel.fs.resolve(args[0]);
         let file2 = self.kernel.fs.resolve(args[1]);
-        
+
         match (file1, file2) {
             (Some(f1), Some(f2)) if !f1.is_dir && !f2.is_dir => {
                 if f1.data == f2.data {
@@ -663,8 +694,12 @@ impl System {
         }
         match self.kernel.fs.resolve(args[0]) {
             Some(node) if node.is_dir => format!("{}: directory", args[0]),
-            Some(node) if node.is_executable => format!("{}: ELF 64-bit LSB executable, x86-64", args[0]),
-            Some(node) if node.permissions.starts_with('l') => format!("{}: symbolic link to {}", args[0], node.data),
+            Some(node) if node.is_executable => {
+                format!("{}: ELF 64-bit LSB executable, x86-64", args[0])
+            }
+            Some(node) if node.permissions.starts_with('l') => {
+                format!("{}: symbolic link to {}", args[0], node.data)
+            }
             Some(node) if node.data.starts_with('#') => format!("{}: ASCII text", args[0]),
             Some(_) => format!("{}: data", args[0]),
             None => format!("{}: cannot open (No such file or directory)", args[0]),
@@ -684,7 +719,7 @@ impl System {
             Some(_) => return "cp: omitting directory (use -r for recursive)".into(),
             None => return format!("cp: cannot stat '{}': No such file or directory", args[0]),
         };
-        
+
         match self.kernel.fs.create_file(args[1], &data) {
             Ok(()) => String::new(),
             Err(e) => format!("cp: cannot create '{}': {}", args[1], e),
@@ -804,7 +839,7 @@ impl System {
                 if args.len() < 2 {
                     return "usage: apt search [query]".into();
                 }
-                format!("Sorting... Done\nFull Text Search... Done\nvim/stable 8.2.2434-3 amd64\n  Vi IMproved - enhanced vi editor\n\nnano/stable 5.4-2 amd64\n  small, friendly text editor inspired by Pico")
+                "Sorting... Done\nFull Text Search... Done\nvim/stable 8.2.2434-3 amd64\n  Vi IMproved - enhanced vi editor\n\nnano/stable 5.4-2 amd64\n  small, friendly text editor inspired by Pico".to_string()
             }
             _ => format!("E: Invalid operation {}", args[0]),
         }
@@ -841,14 +876,18 @@ impl System {
 
     fn cmd_alias(&self, args: &[&str]) -> String {
         if args.is_empty() {
-            "alias ls='ls --color=auto'\nalias ll='ls -la'\nalias la='ls -A'\nalias l='ls -CF'".into()
+            "alias ls='ls --color=auto'\nalias ll='ls -la'\nalias la='ls -A'\nalias l='ls -CF'"
+                .into()
         } else {
             "alias: dynamic alias creation not implemented".into()
         }
     }
 
     fn is_builtin(&self, cmd: &str) -> bool {
-        matches!(cmd, "cd" | "exit" | "export" | "pwd" | "echo" | "help" | "history" | "alias")
+        matches!(
+            cmd,
+            "cd" | "exit" | "export" | "pwd" | "echo" | "help" | "history" | "alias"
+        )
     }
 
     fn cmd_ps(&self) -> String {
@@ -2259,8 +2298,8 @@ DESCRIPTION
             "apt", "awk", "cat", "cd", "chmod", "chown", "clear", "cp", "cut", "df", "diff", "du",
             "echo", "env", "exit", "export", "file", "find", "free", "grep", "gunzip", "gzip",
             "head", "help", "history", "hostname", "id", "kill", "ln", "ls", "mkdir", "mv", "ps",
-            "pwd", "rm", "sed", "sort", "sudo", "tail", "tar", "tee", "top", "touch", "tr", "uname",
-            "uniq", "unzip", "uptime", "wc", "whereis", "which", "whoami", "zip",
+            "pwd", "rm", "sed", "sort", "sudo", "tail", "tar", "tee", "top", "touch", "tr",
+            "uname", "uniq", "unzip", "uptime", "wc", "whereis", "which", "whoami", "zip",
         ];
         for c in cmds {
             if c.starts_with(partial) {
