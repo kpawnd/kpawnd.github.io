@@ -741,7 +741,7 @@ impl System {
         let path = if args.is_empty() { "." } else { args[0] };
         match self.kernel.fs.resolve(path) {
             Some(node) if node.is_dir => {
-                let size = self.calc_dir_size(node);
+                let size = Self::calc_dir_size(node);
                 format!("{}\t{}", size / 1024, path)
             }
             Some(node) => format!("{}\t{}", node.size / 1024, path),
@@ -749,11 +749,11 @@ impl System {
         }
     }
 
-    fn calc_dir_size(&self, node: &crate::vfs::Inode) -> usize {
+    fn calc_dir_size(node: &crate::vfs::Inode) -> usize {
         let mut total = 4096; // directory itself
         for child in node.children.values() {
             if child.is_dir {
-                total += self.calc_dir_size(child);
+                total += Self::calc_dir_size(child);
             } else {
                 total += child.size;
             }
