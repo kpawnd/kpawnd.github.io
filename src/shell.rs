@@ -56,14 +56,15 @@ impl Shell {
     }
 }
 
-pub fn prompt(kernel: &Kernel) -> String {
+pub fn prompt(kernel: &Kernel, user: &str, home: &str) -> String {
     let cwd = &kernel.fs.cwd;
-    let display = if cwd == "/home/user" {
-        "~"
-    } else if let Some(rest) = cwd.strip_prefix("/home/user/") {
-        &format!("~/{}", rest)
+    let home_prefix = if home.ends_with('/') { &home[..home.len() - 1] } else { home };
+    let display = if cwd == home_prefix {
+        "~".to_string()
+    } else if let Some(rest) = cwd.strip_prefix(&(home_prefix.to_string() + "/")) {
+        format!("~/{}", rest)
     } else {
-        cwd
+        cwd.to_string()
     };
-    format!("user@kpawnd:{}$ ", display)
+    format!("{}@kpawnd:{}$ ", user, display)
 }

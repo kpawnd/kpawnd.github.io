@@ -10,12 +10,19 @@ pub struct Color {
 }
 
 impl Color {
+    #[inline(always)]
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Color { r, g, b, a }
     }
 
+    #[inline(always)]
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Color { r, g, b, a: 255 }
+    }
+
+    #[inline(always)]
+    pub const fn rgba_u32(&self) -> u32 {
+        (self.a as u32) << 24 | (self.b as u32) << 16 | (self.g as u32) << 8 | (self.r as u32)
     }
 
     pub const BLACK: Color = Color::new(0, 0, 0, 255);
@@ -28,10 +35,13 @@ impl Color {
     pub const MAGENTA: Color = Color::new(255, 0, 255, 255);
 }
 
+/// High-performance frame buffer with batch operations
 pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
+    // Cached values for fast access
+    pub stride: usize,
 }
 
 impl FrameBuffer {
@@ -42,36 +52,243 @@ impl FrameBuffer {
             width,
             height,
             pixels,
+            stride: (width * 4) as usize,
         }
     }
 
+    /// Ultra-fast clear using memset-like pattern
+    #[inline]
     pub fn clear(&mut self, color: &Color) {
-        for y in 0..self.height {
-            for x in 0..self.width {
-                self.set_pixel(x, y, color);
+        // Create a 4-byte pattern that can be repeated
+        let pattern = [color.r, color.g, color.b, color.a];
+
+        // Clear in chunks for cache efficiency
+        let len = self.pixels.len();
+        let mut i = 0;
+
+        // Unroll loop 8x for better performance
+        while i + 32 <= len {
+            unsafe {
+                let ptr = self.pixels.as_mut_ptr().add(i);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr, 4);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr.add(4), 4);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr.add(8), 4);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr.add(12), 4);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr.add(16), 4);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr.add(20), 4);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr.add(24), 4);
+                std::ptr::copy_nonoverlapping(pattern.as_ptr(), ptr.add(28), 4);
+            }
+            i += 32;
+        }
+
+        // Handle remainder
+        while i + 4 <= len {
+            self.pixels[i] = color.r;
+            self.pixels[i + 1] = color.g;
+            self.pixels[i + 2] = color.b;
+            self.pixels[i + 3] = color.a;
+            i += 4;
+        }
+    }
+
+    /// Fast clear to black (optimized memset to 0)
+    #[inline]
+    pub fn clear_black(&mut self) {
+        self.pixels.fill(0);
+        // Set alpha channel to 255
+        let len = self.pixels.len();
+        let mut i = 3;
+        while i < len {
+            self.pixels[i] = 255;
+            i += 4;
+        }
+    }
+
+    #[inline(always)]
+    pub fn set_pixel(&mut self, x: u32, y: u32, color: &Color) {
+        if x < self.width && y < self.height {
+            let idx = (y as usize * self.stride) + (x as usize * 4);
+            unsafe {
+                *self.pixels.get_unchecked_mut(idx) = color.r;
+                *self.pixels.get_unchecked_mut(idx + 1) = color.g;
+                *self.pixels.get_unchecked_mut(idx + 2) = color.b;
+                *self.pixels.get_unchecked_mut(idx + 3) = color.a;
             }
         }
     }
 
-    pub fn set_pixel(&mut self, x: u32, y: u32, color: &Color) {
-        if x >= self.width || y >= self.height {
+    /// Set pixel with raw RGB values (no Color struct allocation)
+    #[inline(always)]
+    pub fn set_pixel_rgb(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
+        if x < self.width && y < self.height {
+            let idx = (y as usize * self.stride) + (x as usize * 4);
+            unsafe {
+                *self.pixels.get_unchecked_mut(idx) = r;
+                *self.pixels.get_unchecked_mut(idx + 1) = g;
+                *self.pixels.get_unchecked_mut(idx + 2) = b;
+                *self.pixels.get_unchecked_mut(idx + 3) = 255;
+            }
+        }
+    }
+
+    /// Ultra-fast unchecked pixel set (caller must ensure bounds)
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that x < width and y < height, otherwise this will
+    /// cause undefined behavior by accessing out-of-bounds memory.
+    #[inline(always)]
+    pub unsafe fn set_pixel_unchecked(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
+        let idx = (y as usize * self.stride) + (x as usize * 4);
+        *self.pixels.get_unchecked_mut(idx) = r;
+        *self.pixels.get_unchecked_mut(idx + 1) = g;
+        *self.pixels.get_unchecked_mut(idx + 2) = b;
+        *self.pixels.get_unchecked_mut(idx + 3) = 255;
+    }
+
+    /// Draw a vertical line (common in raycasting) - highly optimized
+    #[inline]
+    pub fn draw_vline(&mut self, x: u32, y_start: u32, y_end: u32, r: u8, g: u8, b: u8) {
+        if x >= self.width {
             return;
         }
-        let idx = ((y * self.width + x) * 4) as usize;
-        if idx + 3 >= self.pixels.len() {
+        let y0 = y_start.min(self.height - 1);
+        let y1 = y_end.min(self.height - 1);
+
+        let mut idx = (y0 as usize * self.stride) + (x as usize * 4);
+        for _ in y0..=y1 {
+            unsafe {
+                *self.pixels.get_unchecked_mut(idx) = r;
+                *self.pixels.get_unchecked_mut(idx + 1) = g;
+                *self.pixels.get_unchecked_mut(idx + 2) = b;
+                *self.pixels.get_unchecked_mut(idx + 3) = 255;
+            }
+            idx += self.stride;
+        }
+    }
+
+    /// Draw a vertical line with depth-based shading
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_vline_shaded(
+        &mut self,
+        x: u32,
+        y_start: u32,
+        y_end: u32,
+        r: u8,
+        g: u8,
+        b: u8,
+        shade: f32,
+    ) {
+        if x >= self.width {
             return;
         }
-        self.pixels[idx] = color.r;
-        self.pixels[idx + 1] = color.g;
-        self.pixels[idx + 2] = color.b;
-        self.pixels[idx + 3] = color.a;
+        let y0 = y_start.min(self.height - 1);
+        let y1 = y_end.min(self.height - 1);
+
+        let sr = (r as f32 * shade) as u8;
+        let sg = (g as f32 * shade) as u8;
+        let sb = (b as f32 * shade) as u8;
+
+        let mut idx = (y0 as usize * self.stride) + (x as usize * 4);
+        for _ in y0..=y1 {
+            unsafe {
+                *self.pixels.get_unchecked_mut(idx) = sr;
+                *self.pixels.get_unchecked_mut(idx + 1) = sg;
+                *self.pixels.get_unchecked_mut(idx + 2) = sb;
+                *self.pixels.get_unchecked_mut(idx + 3) = 255;
+            }
+            idx += self.stride;
+        }
+    }
+
+    /// Draw horizontal line (optimized with memset-like approach)
+    #[inline]
+    pub fn draw_hline(&mut self, x_start: u32, x_end: u32, y: u32, r: u8, g: u8, b: u8) {
+        if y >= self.height {
+            return;
+        }
+        let x0 = x_start.min(self.width - 1);
+        let x1 = x_end.min(self.width - 1);
+
+        let row_start = (y as usize * self.stride) + (x0 as usize * 4);
+        for x in x0..=x1 {
+            let idx = row_start + ((x - x0) as usize * 4);
+            unsafe {
+                *self.pixels.get_unchecked_mut(idx) = r;
+                *self.pixels.get_unchecked_mut(idx + 1) = g;
+                *self.pixels.get_unchecked_mut(idx + 2) = b;
+                *self.pixels.get_unchecked_mut(idx + 3) = 255;
+            }
+        }
+    }
+
+    /// Fill a horizontal span (for floor/ceiling casting)
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn fill_hspan_gradient(
+        &mut self,
+        x_start: u32,
+        x_end: u32,
+        y: u32,
+        r1: u8,
+        g1: u8,
+        b1: u8,
+        r2: u8,
+        g2: u8,
+        b2: u8,
+    ) {
+        if y >= self.height || x_start >= x_end {
+            return;
+        }
+        let x0 = x_start.min(self.width - 1);
+        let x1 = x_end.min(self.width - 1);
+        let span = (x1 - x0) as f32;
+
+        let row_start = (y as usize * self.stride) + (x0 as usize * 4);
+        for x in 0..(x1 - x0) {
+            let t = x as f32 / span;
+            let idx = row_start + (x as usize * 4);
+            unsafe {
+                *self.pixels.get_unchecked_mut(idx) =
+                    (r1 as f32 + (r2 as f32 - r1 as f32) * t) as u8;
+                *self.pixels.get_unchecked_mut(idx + 1) =
+                    (g1 as f32 + (g2 as f32 - g1 as f32) * t) as u8;
+                *self.pixels.get_unchecked_mut(idx + 2) =
+                    (b1 as f32 + (b2 as f32 - b1 as f32) * t) as u8;
+                *self.pixels.get_unchecked_mut(idx + 3) = 255;
+            }
+        }
     }
 
     pub fn draw_rect(&mut self, x: u32, y: u32, w: u32, h: u32, color: &Color) {
-        for dy in 0..h {
-            for dx in 0..w {
-                self.set_pixel(x + dx, y + dy, color);
+        let x_end = (x + w).min(self.width);
+        let y_end = (y + h).min(self.height);
+
+        for dy in y..y_end {
+            let row_start = dy as usize * self.stride;
+            for dx in x..x_end {
+                let idx = row_start + (dx as usize * 4);
+                if idx + 3 < self.pixels.len() {
+                    self.pixels[idx] = color.r;
+                    self.pixels[idx + 1] = color.g;
+                    self.pixels[idx + 2] = color.b;
+                    self.pixels[idx + 3] = color.a;
+                }
             }
+        }
+    }
+
+    /// Optimized filled rectangle with raw colors
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn fill_rect(&mut self, x: u32, y: u32, w: u32, h: u32, r: u8, g: u8, b: u8) {
+        let x_end = (x + w).min(self.width);
+        let y_end = (y + h).min(self.height);
+
+        for dy in y..y_end {
+            self.draw_hline(x, x_end - 1, dy, r, g, b);
         }
     }
 
@@ -105,7 +322,9 @@ impl FrameBuffer {
         let mut y = y0 as i32;
 
         loop {
-            self.set_pixel(x as u32, y as u32, color);
+            if x >= 0 && y >= 0 {
+                self.set_pixel(x as u32, y as u32, color);
+            }
             if x == x1 as i32 && y == y1 as i32 {
                 break;
             }
@@ -218,6 +437,30 @@ impl Graphics {
         )?;
         self.context.put_image_data(&image_data, 0.0, 0.0)?;
         Ok(())
+    }
+
+    // Buffer access methods for direct pixel manipulation (used by DOOM)
+    pub fn set_pixel_unchecked(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
+        unsafe {
+            self.buffer.set_pixel_unchecked(x, y, r, g, b);
+        }
+    }
+
+    pub fn set_pixel_rgb(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
+        self.buffer.set_pixel_rgb(x, y, r, g, b);
+    }
+
+    pub fn draw_vline(&mut self, x: u32, y_start: u32, y_end: u32, r: u8, g: u8, b: u8) {
+        self.buffer.draw_vline(x, y_start, y_end, r, g, b);
+    }
+
+    pub fn draw_hline(&mut self, x_start: u32, x_end: u32, y: u32, r: u8, g: u8, b: u8) {
+        self.buffer.draw_hline(x_start, x_end, y, r, g, b);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn fill_rect(&mut self, x: u32, y: u32, w: u32, h: u32, r: u8, g: u8, b: u8) {
+        self.buffer.fill_rect(x, y, w, h, r, g, b);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), JsValue> {

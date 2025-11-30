@@ -5,7 +5,6 @@ use crate::{
     python::PythonInterpreter,
     services::ServiceManager,
     shell::{prompt, Shell},
-    vfs::Inode,
 };
 use wasm_bindgen::prelude::*;
 
@@ -19,6 +18,10 @@ pub struct System {
     cleared_after_boot: bool,
     python_interp: Option<PythonInterpreter>,
     in_python_repl: bool,
+    user_password: Option<String>,
+    sudo_pending_cmd: Option<String>,
+    sudo_waiting_password: bool,
+    sudo_authenticated_until: Option<f64>,
 }
 
 impl Default for System {
@@ -40,6 +43,10 @@ impl System {
             cleared_after_boot: false,
             python_interp: None,
             in_python_repl: false,
+            user_password: None,
+            sudo_pending_cmd: None,
+            sudo_waiting_password: false,
+            sudo_authenticated_until: None,
         };
 
         // Auto-start system services
@@ -78,7 +85,19 @@ impl System {
     }
     #[wasm_bindgen]
     pub fn prompt(&self) -> String {
-        prompt(&self.kernel)
+        let user = self
+            .shell
+            .env
+            .get("USER")
+            .cloned()
+            .unwrap_or_else(|| "user".into());
+        let home = self
+            .shell
+            .env
+            .get("HOME")
+            .cloned()
+            .unwrap_or_else(|| "/home/user".into());
+        prompt(&self.kernel, &user, &home)
     }
 
     #[wasm_bindgen]
@@ -89,20 +108,48 @@ impl System {
         if !trimmed.is_empty() {
             self.shell.history.push(trimmed.into());
         }
+        if self.sudo_waiting_password {
+            let cmd = self.sudo_pending_cmd.take().unwrap_or_default();
+            self.sudo_waiting_password = false;
+            return self.exec_sudo(&cmd, trimmed);
+        }
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         if parts.is_empty() {
             return String::new();
         }
         let cmd = parts[0];
         let args = &parts[1..];
+        if cmd == "sudo" {
+            if args.is_empty() {
+                return "usage: sudo <command>".into();
+            }
+            // Check if we have a valid cached sudo session (5 minute timeout)
+            let now = js_sys::Date::now();
+            let is_authenticated = self.sudo_authenticated_until
+                .map(|until| now < until)
+                .unwrap_or(false);
+            
+            if is_authenticated {
+                // Execute directly without password prompt
+                return self.exec_sudo_internal(&args.join(" "));
+            } else {
+                // Need password
+                self.sudo_pending_cmd = Some(args.join(" "));
+                self.sudo_waiting_password = true;
+                return format!("[sudo] password for {}:", self.shell.env.get("USER").unwrap_or(&"user".to_string()));
+            }
+        }
         if self.shell.registry.has(cmd) {
             let pid = self.kernel.proc.spawn(cmd, 1);
             self.kernel.scheduler.add(pid, Priority::Normal);
         }
         match cmd {
+            "reboot" => "\x1b[REBOOT]".into(),
             "echo" => { let out=args.join(" "); if out=="github" { format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap()) } else { out } }
-            "help" => "arp cat cd clear curl dig doom echo exit free help history host hostname id ifconfig ip kill ls mkdir myip nc neofetch netstat nslookup ping ps pwd rm route screensaver service socket ss touch traceroute uname uptime wget".into(),
+            "help" => "Available commands:\n\n  File operations:    cat cd chmod chown cp cut diff du file find head ln ls mkdir mv pwd rm rmdir sort tail tee touch tr uniq wc nano vi\n  Text processing:    awk grep sed\n  System info:        df free hostname id man neofetch ps top uname uptime whereis which whoami\n  Network:            arp curl dig host ifconfig ip myip nc netstat nslookup\n                      ping route ss traceroute wget\n  Archives:           tar gzip gunzip zip unzip\n  Package mgmt:       apt apt-get\n  Other:              alias clear doom echo env exit export help history kill\n                      python screensaver service sudo\n\nType 'man <command>' for more info on a specific command.".into(),
+            "man" => self.cmd_man(args),
             "neofetch" => "\x1b[NEOFETCH_DATA]".to_string(),
+            "nano" | "vi" | "vim" => self.cmd_nano(args),
             "python" => { if args.is_empty() { self.start_python_repl() } else { "python: script execution not supported".to_string() } }
             "doom" => "\x1b[LAUNCH_DOOM]".to_string(),
             "screensaver" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
@@ -113,6 +160,35 @@ impl System {
             "cd" => self.cmd_cd(args),
             "pwd" => self.kernel.fs.cwd.clone(),
             "cat" => self.cmd_cat(args),
+            "grep" => self.cmd_grep(args),
+            "find" => self.cmd_find(args),
+            "wc" => self.cmd_wc(args),
+            "head" => self.cmd_head(args),
+            "tail" => self.cmd_tail(args),
+            "diff" => self.cmd_diff(args),
+            "sort" => self.cmd_sort(args),
+            "uniq" => self.cmd_uniq(args),
+            "cut" => self.cmd_cut(args),
+            "tr" => self.cmd_tr(args),
+            "tee" => self.cmd_tee(args),
+            "which" => self.cmd_which(args),
+            "whereis" => self.cmd_whereis(args),
+            "file" => self.cmd_file(args),
+            "ln" => self.cmd_ln(args),
+            "cp" => self.cmd_cp(args),
+            "mv" => self.cmd_mv(args),
+            "chmod" => self.cmd_chmod(args),
+            "chown" => self.cmd_chown(args),
+            "df" => self.cmd_df(args),
+            "du" => self.cmd_du(args),
+            "tar" => self.cmd_tar(args),
+            "gzip" | "gunzip" => self.cmd_gzip(args, cmd),
+            "zip" | "unzip" => self.cmd_zip(args, cmd),
+            "apt" | "apt-get" => self.cmd_apt(args),
+            "top" => self.cmd_top(),
+            "awk" => self.cmd_awk(args),
+            "sed" => self.cmd_sed(args),
+            "alias" => self.cmd_alias(args),
             "touch" => self.cmd_touch(args),
             "mkdir" => self.cmd_mkdir(args),
             "rm" => self.cmd_rm(args),
@@ -122,8 +198,21 @@ impl System {
             "kill" => self.cmd_kill(args),
             "uname" => self.cmd_uname(args),
             "hostname" => self.cmd_hostname(),
-            "id" => "uid=1000(user) gid=1000(user)".into(),
-            "whoami" => "user".into(),
+            "id" => {
+                let user = self
+                    .shell
+                    .env
+                    .get("USER")
+                    .cloned()
+                    .unwrap_or_else(|| "user".into());
+                format!("uid=1000({}) gid=1000({})", user, user)
+            }
+            "whoami" => self
+                .shell
+                .env
+                .get("USER")
+                .cloned()
+                .unwrap_or_else(|| "user".into()),
             "uptime" => format!("up {}ms", self.kernel.uptime_ms()),
             "free" => self.cmd_free(),
             "history" => self.cmd_history(),
@@ -141,29 +230,150 @@ impl System {
             "arp" => self.cmd_arp(args),
             "host" | "nslookup" | "dig" => self.cmd_host(args),
             "nc" | "netcat" => self.cmd_nc(args),
+            "hasgrub" => if self.has_grub() { "yes".into() } else { "no".into() },
             "" => String::new(),
             _ => format!("sh: {}: command not found", cmd),
         }
     }
 
+    #[wasm_bindgen]
+    pub fn set_user_password(&mut self, pw: &str) {
+        self.user_password = Some(pw.into());
+    }
+
+    fn exec_sudo_internal(&mut self, cmd: &str) -> String {
+        let old_user = self.shell.env.get("USER").cloned().unwrap_or_else(|| "user".into());
+        let old_home = self.shell.env.get("HOME").cloned().unwrap_or_else(|| "/home/user".into());
+        let old_owner = self.kernel.fs.get_default_owner();
+        let old_group = self.kernel.fs.get_default_group();
+
+        self.shell.env.insert("USER".into(), "root".into());
+        self.shell.env.insert("HOME".into(), "/root".into());
+        let _ = self.kernel.fs.create_dir("/root");
+        self.kernel.fs.set_default_owner("root", "root");
+
+        let out = self.exec(cmd);
+
+        // revert
+        self.shell.env.insert("USER".into(), old_user);
+        self.shell.env.insert("HOME".into(), old_home);
+        self.kernel.fs.set_default_owner(&old_owner, &old_group);
+        out
+    }
+
+    #[wasm_bindgen]
+    pub fn exec_sudo(&mut self, cmd: &str, pw: &str) -> String {
+        match &self.user_password {
+            Some(saved) if saved == pw => {
+                // Set sudo session to expire in 5 minutes (300000 ms)
+                let now = js_sys::Date::now();
+                self.sudo_authenticated_until = Some(now + 300000.0);
+                self.exec_sudo_internal(cmd)
+            }
+            _ => "sudo: incorrect password".into(),
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn is_waiting_for_sudo(&self) -> bool {
+        self.sudo_waiting_password
+    }
+
+    #[wasm_bindgen]
+    pub fn has_grub(&self) -> bool {
+        // Ensure filesystem initialized before checking
+        if self.kernel.fs.resolve("/boot").is_none() {
+            // SAFETY: has_grub is a quick probe; we need mutable access to init
+            // Workaround by temporarily casting (WASM single-threaded)
+            let this = self as *const System as *mut System;
+            unsafe {
+                (*this).kernel.fs.init();
+            }
+        }
+        self.kernel.fs.resolve("/boot/grub/grub.cfg").is_some()
+    }
+
     fn cmd_ls(&self, args: &[&str]) -> String {
-        let path = args.first().unwrap_or(&".");
+        let mut show_all = false;
+        let mut show_long = false;
+        let mut path = ".";
+
+        for arg in args {
+            if *arg == "-l" {
+                show_long = true;
+            } else if *arg == "-a" {
+                show_all = true;
+            } else if *arg == "-la" || *arg == "-al" {
+                show_long = true;
+                show_all = true;
+            } else if !arg.starts_with('-') {
+                path = arg;
+            }
+        }
+
         match self.kernel.fs.resolve(path) {
             Some(node) if node.is_dir => {
-                let mut names: Vec<_> = node.children.keys().collect();
-                names.sort();
-                names
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join("  ")
+                let mut entries: Vec<_> = node.children.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+
+                if show_long {
+                    let mut out = String::new();
+                    if show_all {
+                        out.push_str("drwxr-xr-x   2 user     user         4096 Nov 29 12:00 \x1b[COLOR:blue].\x1b[COLOR:reset]\n");
+                        out.push_str("drwxr-xr-x   2 root     root         4096 Nov 29 12:00 \x1b[COLOR:blue]..\x1b[COLOR:reset]\n");
+                    }
+                    for (name, child) in &entries {
+                        if !show_all && name.starts_with('.') {
+                            continue;
+                        }
+                        let name_display = if child.is_dir {
+                            format!("\x1b[COLOR:blue]{}\x1b[COLOR:reset]", name)
+                        } else if child.is_executable {
+                            format!("\x1b[COLOR:green]{}\x1b[COLOR:reset]", name)
+                        } else {
+                            name.to_string()
+                        };
+                        out.push_str(&format!(
+                            "{} {:>3} {:>8} {:>8} {:>8} {} {}\n",
+                            child.permissions,
+                            1,
+                            child.owner,
+                            child.group,
+                            child.size,
+                            "Nov 29 12:00",
+                            name_display
+                        ));
+                    }
+                    out.trim_end().to_string()
+                } else {
+                    let names: Vec<String> = entries
+                        .iter()
+                        .filter(|(name, _)| show_all || !name.starts_with('.'))
+                        .map(|(name, child)| {
+                            if child.is_dir {
+                                format!("\x1b[COLOR:blue]{}\x1b[COLOR:reset]", name)
+                            } else if child.is_executable {
+                                format!("\x1b[COLOR:green]{}\x1b[COLOR:reset]", name)
+                            } else {
+                                name.to_string()
+                            }
+                        })
+                        .collect();
+                    names.join("  ")
+                }
             }
             Some(node) => node.name.clone(),
-            None => format!("ls: {}: no such file or directory", path),
+            None => format!("ls: cannot access '{}': No such file or directory", path),
         }
     }
     fn cmd_cd(&mut self, args: &[&str]) -> String {
-        let target = args.first().unwrap_or(&"/");
+        let default_home = self
+            .shell
+            .env
+            .get("HOME")
+            .cloned()
+            .unwrap_or_else(|| "/home/user".into());
+        let target = if args.is_empty() { default_home.as_str() } else { args[0] };
         match self.kernel.fs.cd(target) {
             Ok(()) => String::new(),
             Err(e) => format!("cd: {}: {}", target, e),
@@ -171,53 +381,476 @@ impl System {
     }
     fn cmd_cat(&self, args: &[&str]) -> String {
         if args.is_empty() {
-            return String::new();
+            return "cat: missing operand".into();
         }
         match self.kernel.fs.resolve(args[0]) {
             Some(n) if !n.is_dir => n.data.clone(),
-            Some(_) => format!("cat: {}: is a directory", args[0]),
-            None => format!("cat: {}: no such file", args[0]),
+            Some(_) => format!("cat: {}: Is a directory", args[0]),
+            None => format!("cat: {}: No such file or directory", args[0]),
         }
+    }
+
+    #[wasm_bindgen]
+    pub fn set_user(&mut self, username: &str) {
+        let uname = if username.is_empty() { "user" } else { username };
+        self.shell.env.insert("USER".into(), uname.into());
+        let home = format!("/home/{}", uname);
+        self.shell.env.insert("HOME".into(), home.clone());
+        // Ensure home directory exists
+        let _ = self.kernel.fs.create_dir(&home);
+        // Update default owner for new files/directories
+        self.kernel.fs.set_default_owner(uname, uname);
     }
     fn cmd_touch(&mut self, args: &[&str]) -> String {
         if args.is_empty() {
-            return String::new();
+            return "touch: missing file operand".into();
         }
-        let cwd = self.kernel.fs.cwd.clone();
-        if let Some(dir) = self.kernel.fs.resolve_mut(&cwd) {
-            let name = args[0];
-            if !dir.children.contains_key(name) {
-                dir.children.insert(name.into(), Inode::file(name, ""));
-            }
+        match self.kernel.fs.create_file(args[0], "") {
+            Ok(()) => String::new(),
+            Err(e) => format!("touch: cannot touch '{}': {}", args[0], e),
         }
-        String::new()
     }
     fn cmd_mkdir(&mut self, args: &[&str]) -> String {
         if args.is_empty() {
-            return String::new();
+            return "mkdir: missing operand".into();
         }
-        let cwd = self.kernel.fs.cwd.clone();
-        if let Some(dir) = self.kernel.fs.resolve_mut(&cwd) {
-            let name = args[0];
-            if dir.children.contains_key(name) {
-                return format!("mkdir: {}: exists", name);
-            }
-            dir.children.insert(name.into(), Inode::dir(name));
+        match self.kernel.fs.create_dir(args[0]) {
+            Ok(()) => String::new(),
+            Err(e) => format!("mkdir: cannot create directory '{}': {}", args[0], e),
         }
-        String::new()
     }
     fn cmd_rm(&mut self, args: &[&str]) -> String {
         if args.is_empty() {
-            return String::new();
+            return "rm: missing operand".into();
         }
-        let cwd = self.kernel.fs.cwd.clone();
-        if let Some(dir) = self.kernel.fs.resolve_mut(&cwd) {
-            if dir.children.remove(args[0]).is_none() {
-                return format!("rm: {}: no such file", args[0]);
+
+        let mut force = false;
+        let mut recursive = false;
+        let mut files = Vec::new();
+
+        for arg in args {
+            match *arg {
+                "-f" | "--force" => force = true,
+                "-r" | "-rf" | "-fr" => { recursive = true; force = true; },
+                other => files.push(other),
+            }
+        }
+
+        if files.is_empty() {
+            return "rm: missing operand".into();
+        }
+
+        for file in files {
+            if recursive { self.kernel.fs.set_ignore_critical_deletes(true); }
+            let res = if recursive { self.kernel.fs.remove_recursive(file) } else { self.kernel.fs.remove(file) };
+            if recursive { self.kernel.fs.set_ignore_critical_deletes(false); }
+            match res {
+                Ok(()) => {}
+                Err(e) => {
+                    if self.kernel.fs.kernel_panic {
+                        return format!("\x1b[KERNEL_PANIC]{}", self.kernel.fs.panic_reason);
+                    }
+                    if !force {
+                        return format!("rm: cannot remove '{}': {}", file, e);
+                    }
+                }
             }
         }
         String::new()
     }
+
+    fn cmd_grep(&self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: grep [pattern] [file]".into();
+        }
+        let pattern = args[0];
+        let file_path = args[1];
+        match self.kernel.fs.resolve(file_path) {
+            Some(node) if !node.is_dir => {
+                let lines: Vec<&str> = node.data.lines().collect();
+                let matches: Vec<String> = lines
+                    .iter()
+                    .filter(|line| line.contains(pattern))
+                    .map(|s| s.to_string())
+                    .collect();
+                if matches.is_empty() {
+                    String::new()
+                } else {
+                    matches.join("\n")
+                }
+            }
+            Some(_) => format!("grep: {}: Is a directory", file_path),
+            None => format!("grep: {}: No such file or directory", file_path),
+        }
+    }
+
+    fn cmd_find(&self, args: &[&str]) -> String {
+        let path = if args.is_empty() { "." } else { args[0] };
+        let mut results = Vec::new();
+        self.find_recursive(&self.kernel.fs.normalize(path), &mut results);
+        results.join("\n")
+    }
+
+    fn find_recursive(&self, path: &str, results: &mut Vec<String>) {
+        if let Some(node) = self.kernel.fs.resolve(path) {
+            results.push(path.to_string());
+            if node.is_dir {
+                for (name, _) in &node.children {
+                    let child_path = if path == "/" {
+                        format!("/{}", name)
+                    } else {
+                        format!("{}/{}", path, name)
+                    };
+                    self.find_recursive(&child_path, results);
+                }
+            }
+        }
+    }
+
+    fn cmd_wc(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: wc [file]".into();
+        }
+        match self.kernel.fs.resolve(args[0]) {
+            Some(node) if !node.is_dir => {
+                let lines = node.data.lines().count();
+                let words = node.data.split_whitespace().count();
+                let chars = node.data.len();
+                format!("{:7} {:7} {:7} {}", lines, words, chars, args[0])
+            }
+            Some(_) => format!("wc: {}: Is a directory", args[0]),
+            None => format!("wc: {}: No such file or directory", args[0]),
+        }
+    }
+
+    fn cmd_head(&self, args: &[&str]) -> String {
+        let (n, file) = if args.len() >= 2 && args[0] == "-n" {
+            (args[1].parse().unwrap_or(10), args.get(2).copied())
+        } else {
+            (10, args.get(0).copied())
+        };
+        
+        if file.is_none() {
+            return "usage: head [-n lines] [file]".into();
+        }
+        
+        match self.kernel.fs.resolve(file.unwrap()) {
+            Some(node) if !node.is_dir => {
+                node.data.lines().take(n).collect::<Vec<_>>().join("\n")
+            }
+            Some(_) => format!("head: {}: Is a directory", file.unwrap()),
+            None => format!("head: {}: No such file or directory", file.unwrap()),
+        }
+    }
+
+    fn cmd_tail(&self, args: &[&str]) -> String {
+        let (n, file) = if args.len() >= 2 && args[0] == "-n" {
+            (args[1].parse().unwrap_or(10), args.get(2).copied())
+        } else {
+            (10, args.get(0).copied())
+        };
+        
+        if file.is_none() {
+            return "usage: tail [-n lines] [file]".into();
+        }
+        
+        match self.kernel.fs.resolve(file.unwrap()) {
+            Some(node) if !node.is_dir => {
+                let lines: Vec<&str> = node.data.lines().collect();
+                let start = if lines.len() > n { lines.len() - n } else { 0 };
+                lines[start..].join("\n")
+            }
+            Some(_) => format!("tail: {}: Is a directory", file.unwrap()),
+            None => format!("tail: {}: No such file or directory", file.unwrap()),
+        }
+    }
+
+    fn cmd_diff(&self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: diff [file1] [file2]".into();
+        }
+        let file1 = self.kernel.fs.resolve(args[0]);
+        let file2 = self.kernel.fs.resolve(args[1]);
+        
+        match (file1, file2) {
+            (Some(f1), Some(f2)) if !f1.is_dir && !f2.is_dir => {
+                if f1.data == f2.data {
+                    String::new()
+                } else {
+                    format!("Files {} and {} differ", args[0], args[1])
+                }
+            }
+            _ => "diff: invalid files".into(),
+        }
+    }
+
+    fn cmd_sort(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: sort [file]".into();
+        }
+        match self.kernel.fs.resolve(args[0]) {
+            Some(node) if !node.is_dir => {
+                let mut lines: Vec<&str> = node.data.lines().collect();
+                lines.sort();
+                lines.join("\n")
+            }
+            Some(_) => format!("sort: {}: Is a directory", args[0]),
+            None => format!("sort: {}: No such file or directory", args[0]),
+        }
+    }
+
+    fn cmd_uniq(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: uniq [file]".into();
+        }
+        match self.kernel.fs.resolve(args[0]) {
+            Some(node) if !node.is_dir => {
+                let lines: Vec<&str> = node.data.lines().collect();
+                let mut result = Vec::new();
+                let mut last = "";
+                for line in lines {
+                    if line != last {
+                        result.push(line);
+                        last = line;
+                    }
+                }
+                result.join("\n")
+            }
+            Some(_) => format!("uniq: {}: Is a directory", args[0]),
+            None => format!("uniq: {}: No such file or directory", args[0]),
+        }
+    }
+
+    fn cmd_cut(&self, _args: &[&str]) -> String {
+        "cut: simplified implementation not available".into()
+    }
+
+    fn cmd_tr(&self, _args: &[&str]) -> String {
+        "tr: simplified implementation not available".into()
+    }
+
+    fn cmd_tee(&self, _args: &[&str]) -> String {
+        "tee: simplified implementation not available (no pipe support yet)".into()
+    }
+
+    fn cmd_which(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: which [command]".into();
+        }
+        let cmd = args[0];
+        if self.shell.registry.has(cmd) || self.is_builtin(cmd) {
+            format!("/usr/bin/{}", cmd)
+        } else {
+            format!("which: no {} in (/usr/bin:/bin:/usr/sbin:/sbin)", cmd)
+        }
+    }
+
+    fn cmd_whereis(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: whereis [command]".into();
+        }
+        let cmd = args[0];
+        if self.shell.registry.has(cmd) || self.is_builtin(cmd) {
+            format!("{}: /usr/bin/{} /usr/share/man/man1/{}.1.gz", cmd, cmd, cmd)
+        } else {
+            format!("{}: not found", cmd)
+        }
+    }
+
+    fn cmd_file(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: file [file]".into();
+        }
+        match self.kernel.fs.resolve(args[0]) {
+            Some(node) if node.is_dir => format!("{}: directory", args[0]),
+            Some(node) if node.is_executable => format!("{}: ELF 64-bit LSB executable, x86-64", args[0]),
+            Some(node) if node.permissions.starts_with('l') => format!("{}: symbolic link to {}", args[0], node.data),
+            Some(node) if node.data.starts_with('#') => format!("{}: ASCII text", args[0]),
+            Some(_) => format!("{}: data", args[0]),
+            None => format!("{}: cannot open (No such file or directory)", args[0]),
+        }
+    }
+
+    fn cmd_ln(&mut self, _args: &[&str]) -> String {
+        "ln: symbolic links not fully implemented".into()
+    }
+
+    fn cmd_cp(&mut self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: cp [source] [dest]".into();
+        }
+        let data = match self.kernel.fs.resolve(args[0]) {
+            Some(node) if !node.is_dir => node.data.clone(),
+            Some(_) => return "cp: omitting directory (use -r for recursive)".into(),
+            None => return format!("cp: cannot stat '{}': No such file or directory", args[0]),
+        };
+        
+        match self.kernel.fs.create_file(args[1], &data) {
+            Ok(()) => String::new(),
+            Err(e) => format!("cp: cannot create '{}': {}", args[1], e),
+        }
+    }
+
+    fn cmd_mv(&mut self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: mv [source] [dest]".into();
+        }
+        match self.kernel.fs.resolve(args[0]) {
+            Some(node) if !node.is_dir => {
+                let data = node.data.clone();
+                match self.kernel.fs.create_file(args[1], &data) {
+                    Ok(()) => {
+                        let _ = self.kernel.fs.remove(args[0]);
+                        String::new()
+                    }
+                    Err(e) => format!("mv: cannot move to '{}': {}", args[1], e),
+                }
+            }
+            Some(_) => "mv: cannot move directory".into(),
+            None => format!("mv: cannot stat '{}': No such file or directory", args[0]),
+        }
+    }
+
+    fn cmd_chmod(&mut self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: chmod [mode] [file]".into();
+        }
+        "chmod: permissions are simulated (no effect)".into()
+    }
+
+    fn cmd_chown(&mut self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: chown [owner] [file]".into();
+        }
+        "chown: ownership changes are simulated (no effect)".into()
+    }
+
+    fn cmd_df(&self, _args: &[&str]) -> String {
+        let (used, total) = self.kernel.mem.usage();
+        format!(
+            "Filesystem     1K-blocks    Used Available Use% Mounted on\n\
+             /dev/sda1      {}  {}   {}  {}% /",
+            total / 1024,
+            used / 1024,
+            (total - used) / 1024,
+            (used * 100) / total
+        )
+    }
+
+    fn cmd_du(&self, args: &[&str]) -> String {
+        let path = if args.is_empty() { "." } else { args[0] };
+        match self.kernel.fs.resolve(path) {
+            Some(node) if node.is_dir => {
+                let size = self.calc_dir_size(node);
+                format!("{}\t{}", size / 1024, path)
+            }
+            Some(node) => format!("{}\t{}", node.size / 1024, path),
+            None => format!("du: cannot access '{}': No such file or directory", path),
+        }
+    }
+
+    fn calc_dir_size(&self, node: &crate::vfs::Inode) -> usize {
+        let mut total = 4096; // directory itself
+        for child in node.children.values() {
+            if child.is_dir {
+                total += self.calc_dir_size(child);
+            } else {
+                total += child.size;
+            }
+        }
+        total
+    }
+
+    fn cmd_tar(&self, _args: &[&str]) -> String {
+        "tar: archive creation/extraction not implemented".into()
+    }
+
+    fn cmd_gzip(&self, _args: &[&str], cmd: &str) -> String {
+        if cmd == "gzip" {
+            "gzip: compression not implemented".into()
+        } else {
+            "gunzip: decompression not implemented".into()
+        }
+    }
+
+    fn cmd_zip(&self, _args: &[&str], cmd: &str) -> String {
+        if cmd == "zip" {
+            "zip: compression not implemented".into()
+        } else {
+            "unzip: decompression not implemented".into()
+        }
+    }
+
+    fn cmd_apt(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: apt [install|remove|update|upgrade|search] [package]".into();
+        }
+        match args[0] {
+            "update" => "Reading package lists... Done\nBuilding dependency tree... Done\nAll packages are up to date.".into(),
+            "upgrade" => "Reading package lists... Done\nBuilding dependency tree... Done\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.".into(),
+            "install" => {
+                if args.len() < 2 {
+                    return "usage: apt install [package]".into();
+                }
+                format!("Reading package lists... Done\nBuilding dependency tree... Done\nThe following NEW packages will be installed:\n  {}\n0 upgraded, 1 newly installed, 0 to remove.\nNeed to get 1024 kB of archives.\nAfter this operation, 4096 kB of additional disk space will be used.\nGet:1 http://archive.ubuntu.com/ubuntu {} [1024 kB]\nFetched 1024 kB in 1s\nSelecting previously unselected package {}.\nPreparing to unpack .../{}_{}_amd64.deb ...\nUnpacking {} ...\nSetting up {} ...", args[1], args[1], args[1], args[1], "1.0.0", args[1], args[1])
+            }
+            "remove" => {
+                if args.len() < 2 {
+                    return "usage: apt remove [package]".into();
+                }
+                format!("Reading package lists... Done\nBuilding dependency tree... Done\nThe following packages will be REMOVED:\n  {}\n0 upgraded, 0 newly installed, 1 to remove.\nAfter this operation, 4096 kB disk space will be freed.\nRemoving {} ...", args[1], args[1])
+            }
+            "search" => {
+                if args.len() < 2 {
+                    return "usage: apt search [query]".into();
+                }
+                format!("Sorting... Done\nFull Text Search... Done\nvim/stable 8.2.2434-3 amd64\n  Vi IMproved - enhanced vi editor\n\nnano/stable 5.4-2 amd64\n  small, friendly text editor inspired by Pico")
+            }
+            _ => format!("E: Invalid operation {}", args[0]),
+        }
+    }
+
+    fn cmd_top(&self) -> String {
+        let total_mem = self.kernel.mem.total;
+        let free_mem = self.kernel.mem.free;
+        let used_mem = total_mem - free_mem;
+        format!(
+            "top - {}  up {}ms,  1 user,  load average: 0.00, 0.00, 0.00\n\
+             Tasks: {} total,   1 running,   {} sleeping,   0 stopped,   0 zombie\n\
+             %Cpu(s):  0.3 us,  0.1 sy,  0.0 ni, 99.6 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st\n\
+             MiB Mem :   {}.0 total,   {}.0 free,   {}.0 used,   {}.0 buff/cache\n\n\
+             PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n",
+            "12:00:00",
+            self.kernel.uptime_ms(),
+            self.kernel.proc.list().len(),
+            self.kernel.proc.list().len() - 1,
+            total_mem / 1024 / 1024,
+            free_mem / 1024 / 1024,
+            used_mem / 1024 / 1024,
+            0
+        )
+    }
+
+    fn cmd_awk(&self, _args: &[&str]) -> String {
+        "awk: text processing not fully implemented".into()
+    }
+
+    fn cmd_sed(&self, _args: &[&str]) -> String {
+        "sed: stream editor not fully implemented".into()
+    }
+
+    fn cmd_alias(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            "alias ls='ls --color=auto'\nalias ll='ls -la'\nalias la='ls -A'\nalias l='ls -CF'".into()
+        } else {
+            "alias: dynamic alias creation not implemented".into()
+        }
+    }
+
+    fn is_builtin(&self, cmd: &str) -> bool {
+        matches!(cmd, "cd" | "exit" | "export" | "pwd" | "echo" | "help" | "history" | "alias")
+    }
+
     fn cmd_ps(&self) -> String {
         let mut out = String::from("  PID  PPID STAT CMD\n");
         for p in self.kernel.proc.list() {
@@ -247,10 +880,26 @@ impl System {
         }
     }
     fn cmd_uname(&self, args: &[&str]) -> String {
+        let kernel_ver = crate::kernel::KERNEL_VERSION;
+        let version = crate::kernel::VERSION;
+
         if args.contains(&"-a") {
-            format!("kpawnd {} wasm32 kpawnd", crate::kernel::VERSION)
-        } else {
+            format!(
+                "Linux kpawnd {} #1 SMP PREEMPT_DYNAMIC {} wasm32 GNU/Linux",
+                kernel_ver, version
+            )
+        } else if args.contains(&"-r") {
+            kernel_ver.into()
+        } else if args.contains(&"-s") {
+            "Linux".into()
+        } else if args.contains(&"-n") {
             "kpawnd".into()
+        } else if args.contains(&"-m") {
+            "wasm32".into()
+        } else if args.contains(&"-o") {
+            "GNU/Linux".into()
+        } else {
+            "Linux".into()
         }
     }
     fn cmd_hostname(&self) -> String {
@@ -278,6 +927,775 @@ impl System {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    fn cmd_man(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "What manual page do you want?\nFor example, try 'man ls'.".into();
+        }
+
+        let cmd = args[0];
+        match cmd {
+            "ls" => {
+                r#"LS(1)                            User Commands                           LS(1)
+
+NAME
+       ls - list directory contents
+
+SYNOPSIS
+       ls [OPTION]... [FILE]...
+
+DESCRIPTION
+       List information about the FILEs (the current directory by default).
+
+       -a, --all
+              do not ignore entries starting with .
+
+       -l     use a long listing format
+
+EXAMPLES
+       ls -la /bin
+              List all files in /bin with details
+
+SEE ALSO
+       dir(1), find(1)
+"#
+                .into()
+            }
+
+            "cat" => {
+                r#"CAT(1)                           User Commands                          CAT(1)
+
+NAME
+       cat - concatenate files and print on the standard output
+
+SYNOPSIS
+       cat [FILE]...
+
+DESCRIPTION
+       Concatenate FILE(s) to standard output.
+
+EXAMPLES
+       cat /etc/passwd
+              Display the contents of /etc/passwd
+"#
+                .into()
+            }
+
+            "cd" => {
+                r#"CD(1)                            User Commands                           CD(1)
+
+NAME
+       cd - change the working directory
+
+SYNOPSIS
+       cd [DIR]
+
+DESCRIPTION
+       Change the current directory to DIR. The default DIR is the value of the
+       HOME shell variable (usually /home/user).
+
+       ..     Move to parent directory
+       /      Move to root directory
+"#
+                .into()
+            }
+
+            "pwd" => {
+                r#"PWD(1)                           User Commands                          PWD(1)
+
+NAME
+       pwd - print name of current/working directory
+
+SYNOPSIS
+       pwd
+
+DESCRIPTION
+       Print the full filename of the current working directory.
+"#
+                .into()
+            }
+
+            "rm" => {
+                r#"RM(1)                            User Commands                           RM(1)
+
+NAME
+       rm - remove files or directories
+
+SYNOPSIS
+       rm [OPTION]... [FILE]...
+
+DESCRIPTION
+       rm removes each specified file. By default, it does not remove directories.
+
+       -f, --force
+              ignore nonexistent files and arguments
+
+       -r, -R, --recursive
+              remove directories and their contents recursively
+
+WARNING
+       Removing critical system files (like /bin/sh) will cause a kernel panic!
+"#
+                .into()
+            }
+
+            "mkdir" => {
+                r#"MKDIR(1)                         User Commands                        MKDIR(1)
+
+NAME
+       mkdir - make directories
+
+SYNOPSIS
+       mkdir [DIRECTORY]...
+
+DESCRIPTION
+       Create the DIRECTORY(ies), if they do not already exist.
+"#
+                .into()
+            }
+
+            "touch" => {
+                r#"TOUCH(1)                         User Commands                        TOUCH(1)
+
+NAME
+       touch - change file timestamps
+
+SYNOPSIS
+       touch [FILE]...
+
+DESCRIPTION
+       Update the access and modification times of each FILE to the current time.
+       A FILE argument that does not exist is created empty.
+"#
+                .into()
+            }
+
+            "nano" => {
+                r#"NANO(1)                          User Commands                         NANO(1)
+
+NAME
+       nano - Nano's ANOther editor, inspired by Pico
+
+SYNOPSIS
+       nano [FILE]
+
+DESCRIPTION
+       nano is a small and friendly editor.
+
+KEY BINDINGS
+       ^G     Display help text
+       ^O     Write the current file to disk
+       ^X     Exit nano
+
+       Use arrow keys to navigate. Type to insert text.
+"#
+                .into()
+            }
+
+            "ps" => {
+                r#"PS(1)                            User Commands                           PS(1)
+
+NAME
+       ps - report a snapshot of the current processes
+
+SYNOPSIS
+       ps
+
+DESCRIPTION
+       ps displays information about a selection of the active processes.
+
+OUTPUT
+       PID    Process ID
+       PPID   Parent process ID
+       STAT   Process state (R=running, S=sleeping, T=stopped, Z=zombie)
+       CMD    Command name
+"#
+                .into()
+            }
+
+            "kill" => {
+                r#"KILL(1)                          User Commands                         KILL(1)
+
+NAME
+       kill - send a signal to a process
+
+SYNOPSIS
+       kill PID
+
+DESCRIPTION
+       Send SIGTERM to the process with the given PID.
+"#
+                .into()
+            }
+
+            "uname" => {
+                r#"UNAME(1)                         User Commands                        UNAME(1)
+
+NAME
+       uname - print system information
+
+SYNOPSIS
+       uname [OPTION]...
+
+DESCRIPTION
+       Print certain system information.
+
+       -a, --all
+              print all information
+
+       -s, --kernel-name
+              print the kernel name
+
+       -r, --kernel-release
+              print the kernel release
+
+       -m, --machine
+              print the machine hardware name
+
+       -o, --operating-system
+              print the operating system
+"#
+                .into()
+            }
+
+            "ping" => {
+                r#"PING(1)                          User Commands                         PING(1)
+
+NAME
+       ping - send ICMP ECHO_REQUEST to network hosts
+
+SYNOPSIS
+       ping HOST
+
+DESCRIPTION
+       ping uses the ICMP protocol's mandatory ECHO_REQUEST datagram to elicit
+       an ICMP ECHO_RESPONSE from a host or gateway.
+
+NOTE
+       This implementation uses HTTP to simulate ping via a proxy service.
+"#
+                .into()
+            }
+
+            "curl" => {
+                r#"CURL(1)                          User Commands                         CURL(1)
+
+NAME
+       curl - transfer a URL
+
+SYNOPSIS
+       curl [options] URL
+
+OPTIONS
+       -X METHOD
+              Specify request method (GET, POST, etc.)
+
+       -I, --head
+              Show response headers only
+
+       -v     Verbose mode
+
+EXAMPLES
+       curl https://api.github.com
+       curl -I https://example.com
+"#
+                .into()
+            }
+
+            "grep" => {
+                r#"GREP(1)                          User Commands                         GREP(1)
+
+NAME
+       grep - print lines matching a pattern
+
+SYNOPSIS
+       grep PATTERN FILE
+
+DESCRIPTION
+       grep searches for PATTERN in each FILE and prints each line that matches.
+
+EXAMPLES
+       grep "error" /var/log/syslog
+              Search for lines containing "error" in syslog
+"#
+                .into()
+            }
+
+            "find" => {
+                r#"FIND(1)                          User Commands                         FIND(1)
+
+NAME
+       find - search for files in a directory hierarchy
+
+SYNOPSIS
+       find [PATH]
+
+DESCRIPTION
+       find recursively lists all files and directories under PATH.
+       If PATH is omitted, the current directory is used.
+
+EXAMPLES
+       find /etc
+              List all files under /etc
+       find .
+              List all files in current directory recursively
+"#
+                .into()
+            }
+
+            "wc" => {
+                r#"WC(1)                            User Commands                           WC(1)
+
+NAME
+       wc - print newline, word, and byte counts
+
+SYNOPSIS
+       wc FILE
+
+DESCRIPTION
+       Print newline, word, and byte counts for FILE.
+
+OUTPUT
+       Lines, words, bytes, and filename
+"#
+                .into()
+            }
+
+            "head" => {
+                r#"HEAD(1)                          User Commands                         HEAD(1)
+
+NAME
+       head - output the first part of files
+
+SYNOPSIS
+       head [-n NUM] FILE
+
+DESCRIPTION
+       Print the first 10 lines of FILE to standard output.
+       With -n NUM, print the first NUM lines instead.
+
+EXAMPLES
+       head -n 5 /etc/passwd
+              Show first 5 lines of passwd
+"#
+                .into()
+            }
+
+            "tail" => {
+                r#"TAIL(1)                          User Commands                         TAIL(1)
+
+NAME
+       tail - output the last part of files
+
+SYNOPSIS
+       tail [-n NUM] FILE
+
+DESCRIPTION
+       Print the last 10 lines of FILE to standard output.
+       With -n NUM, print the last NUM lines instead.
+
+EXAMPLES
+       tail -n 20 /var/log/syslog
+              Show last 20 lines of syslog
+"#
+                .into()
+            }
+
+            "diff" => {
+                r#"DIFF(1)                          User Commands                         DIFF(1)
+
+NAME
+       diff - compare files line by line
+
+SYNOPSIS
+       diff FILE1 FILE2
+
+DESCRIPTION
+       Compare FILE1 and FILE2 line by line.
+"#
+                .into()
+            }
+
+            "sort" => {
+                r#"SORT(1)                          User Commands                         SORT(1)
+
+NAME
+       sort - sort lines of text files
+
+SYNOPSIS
+       sort FILE
+
+DESCRIPTION
+       Write sorted concatenation of FILE to standard output.
+"#
+                .into()
+            }
+
+            "uniq" => {
+                r#"UNIQ(1)                          User Commands                         UNIQ(1)
+
+NAME
+       uniq - report or omit repeated lines
+
+SYNOPSIS
+       uniq FILE
+
+DESCRIPTION
+       Filter adjacent matching lines from FILE.
+"#
+                .into()
+            }
+
+            "which" => {
+                r#"WHICH(1)                         User Commands                        WHICH(1)
+
+NAME
+       which - locate a command
+
+SYNOPSIS
+       which COMMAND
+
+DESCRIPTION
+       which returns the pathnames of the files that would be executed in the
+       current environment if COMMAND was run.
+"#
+                .into()
+            }
+
+            "whereis" => {
+                r#"WHEREIS(1)                       User Commands                      WHEREIS(1)
+
+NAME
+       whereis - locate the binary, source, and manual page files for a command
+
+SYNOPSIS
+       whereis COMMAND
+
+DESCRIPTION
+       whereis locates the binary, source and manual files for the specified
+       command names.
+"#
+                .into()
+            }
+
+            "file" => {
+                r#"FILE(1)                          User Commands                         FILE(1)
+
+NAME
+       file - determine file type
+
+SYNOPSIS
+       file FILE
+
+DESCRIPTION
+       file tests each argument in an attempt to classify it by examining
+       file type, permissions, and contents.
+"#
+                .into()
+            }
+
+            "cp" => {
+                r#"CP(1)                            User Commands                           CP(1)
+
+NAME
+       cp - copy files and directories
+
+SYNOPSIS
+       cp SOURCE DEST
+
+DESCRIPTION
+       Copy SOURCE to DEST.
+
+NOTE
+       Directory copying (-r) not yet implemented.
+"#
+                .into()
+            }
+
+            "mv" => {
+                r#"MV(1)                            User Commands                           MV(1)
+
+NAME
+       mv - move (rename) files
+
+SYNOPSIS
+       mv SOURCE DEST
+
+DESCRIPTION
+       Rename SOURCE to DEST, or move SOURCE to DEST.
+"#
+                .into()
+            }
+
+            "chmod" => {
+                r#"CHMOD(1)                         User Commands                        CHMOD(1)
+
+NAME
+       chmod - change file mode bits
+
+SYNOPSIS
+       chmod MODE FILE
+
+DESCRIPTION
+       chmod changes the file mode bits of FILE.
+
+NOTE
+       Permissions are simulated in kpawnd and don't affect file access.
+"#
+                .into()
+            }
+
+            "chown" => {
+                r#"CHOWN(1)                         User Commands                        CHOWN(1)
+
+NAME
+       chown - change file owner and group
+
+SYNOPSIS
+       chown OWNER FILE
+
+DESCRIPTION
+       chown changes the user and/or group ownership of FILE.
+
+NOTE
+       Ownership changes are simulated in kpawnd.
+"#
+                .into()
+            }
+
+            "df" => {
+                r#"DF(1)                            User Commands                           DF(1)
+
+NAME
+       df - report file system disk space usage
+
+SYNOPSIS
+       df
+
+DESCRIPTION
+       df displays the amount of disk space available on the file system.
+"#
+                .into()
+            }
+
+            "du" => {
+                r#"DU(1)                            User Commands                           DU(1)
+
+NAME
+       du - estimate file space usage
+
+SYNOPSIS
+       du [PATH]
+
+DESCRIPTION
+       Summarize disk usage of PATH (or current directory).
+"#
+                .into()
+            }
+
+            "apt" | "apt-get" => {
+                r#"APT(8)                      Package Management                         APT(8)
+
+NAME
+       apt - command-line interface for package management
+
+SYNOPSIS
+       apt [install|remove|update|upgrade|search] [PACKAGE]
+
+DESCRIPTION
+       apt provides a high-level interface for package management.
+
+COMMANDS
+       update     Update package list
+       upgrade    Upgrade all packages
+       install    Install package
+       remove     Remove package
+       search     Search for packages
+
+NOTE
+       This is a simulated package manager in kpawnd.
+"#
+                .into()
+            }
+
+            "top" => {
+                r#"TOP(1)                           User Commands                          TOP(1)
+
+NAME
+       top - display Linux processes
+
+SYNOPSIS
+       top
+
+DESCRIPTION
+       The top program provides a dynamic real-time view of a running system.
+       It displays system summary information and a list of processes.
+
+NOTE
+       Press q or Ctrl+C to exit (simulated in kpawnd).
+"#
+                .into()
+            }
+
+            "sudo" => {
+                r#"SUDO(8)                     System Administration                     SUDO(8)
+
+NAME
+       sudo - execute a command as another user
+
+SYNOPSIS
+       sudo COMMAND
+
+DESCRIPTION
+       sudo allows permitted users to run commands as the superuser or another user.
+       Password authentication is required. The session is cached for 5 minutes.
+
+EXAMPLES
+       sudo ls /root
+              List files in root's home directory
+       sudo rm -rf /boot/grub
+              DANGER: Delete GRUB bootloader (will break boot!)
+"#
+                .into()
+            }
+
+            "echo" => {
+                r#"ECHO(1)                          User Commands                         ECHO(1)
+
+NAME
+       echo - display a line of text
+
+SYNOPSIS
+       echo [STRING]...
+
+DESCRIPTION
+       Echo the STRING(s) to standard output.
+
+SPECIAL
+       echo github
+              Opens the kpawnd GitHub page in a new tab
+"#
+                .into()
+            }
+
+            "clear" => {
+                r#"CLEAR(1)                         User Commands                        CLEAR(1)
+
+NAME
+       clear - clear the terminal screen
+
+SYNOPSIS
+       clear
+
+DESCRIPTION
+       clear clears your screen if this is possible.
+"#
+                .into()
+            }
+
+            "history" => {
+                r#"HISTORY(1)                       User Commands                      HISTORY(1)
+
+NAME
+       history - display command history
+
+SYNOPSIS
+       history
+
+DESCRIPTION
+       Display the history list with line numbers. Use arrow keys to navigate
+       through previous commands.
+"#
+                .into()
+            }
+
+            "neofetch" => {
+                r#"NEOFETCH(1)                      User Commands                     NEOFETCH(1)
+
+NAME
+       neofetch - display system information
+
+SYNOPSIS
+       neofetch
+
+DESCRIPTION
+       Neofetch is a command-line system information tool. It displays
+       information about your operating system, software and hardware.
+"#
+                .into()
+            }
+
+            "python" => {
+                r#"PYTHON(1)                        User Commands                       PYTHON(1)
+
+NAME
+       python - interactive Python interpreter
+
+SYNOPSIS
+       python
+
+DESCRIPTION
+       Start an interactive Python REPL (Read-Eval-Print Loop).
+       This is a sandboxed Rust-backed Python interpreter.
+
+       Type exit() to exit the interpreter.
+"#
+                .into()
+            }
+
+            "doom" => {
+                r#"DOOM(1)                          User Commands                         DOOM(1)
+
+NAME
+       doom - play a game
+
+SYNOPSIS
+       doom
+
+DESCRIPTION
+       Launch a simple game in the terminal.
+       Press ESC to exit.
+"#
+                .into()
+            }
+
+            "man" => {
+                r#"MAN(1)                           User Commands                          MAN(1)
+
+NAME
+       man - an interface to the system reference manuals
+
+SYNOPSIS
+       man [COMMAND]
+
+DESCRIPTION
+       man is the system's manual pager. Each page argument given to man is
+       normally the name of a program, utility or function.
+"#
+                .into()
+            }
+
+            _ => format!(
+                "No manual entry for {}\n\nTry 'help' to see available commands.",
+                cmd
+            ),
+        }
+    }
+
+    fn cmd_nano(&mut self, args: &[&str]) -> String {
+        let filename = if args.is_empty() { "" } else { args[0] };
+        let content = if !filename.is_empty() {
+            match self.kernel.fs.resolve(filename) {
+                Some(node) if !node.is_dir => node.data.clone(),
+                Some(_) => return format!("nano: {}: Is a directory", filename),
+                None => String::new(), // New file
+            }
+        } else {
+            String::new()
+        };
+        format!("\x1b[NANO:{}:{}]", filename, content.replace('\n', "\\n"))
+    }
+
     fn cmd_env(&self) -> String {
         let mut vars: Vec<_> = self.shell.env.iter().collect();
         vars.sort_by_key(|(k, _)| *k);
@@ -838,9 +2256,11 @@ impl System {
     pub fn complete(&self, partial: &str) -> Vec<JsValue> {
         let mut matches = Vec::new();
         let cmds = [
-            "cat", "cd", "clear", "echo", "env", "exit", "export", "free", "help", "history",
-            "hostname", "id", "kill", "ls", "mkdir", "ps", "pwd", "rm", "touch", "uname", "uptime",
-            "whoami",
+            "apt", "awk", "cat", "cd", "chmod", "chown", "clear", "cp", "cut", "df", "diff", "du",
+            "echo", "env", "exit", "export", "file", "find", "free", "grep", "gunzip", "gzip",
+            "head", "help", "history", "hostname", "id", "kill", "ln", "ls", "mkdir", "mv", "ps",
+            "pwd", "rm", "sed", "sort", "sudo", "tail", "tar", "tee", "top", "touch", "tr", "uname",
+            "uniq", "unzip", "uptime", "wc", "whereis", "which", "whoami", "zip",
         ];
         for c in cmds {
             if c.starts_with(partial) {
@@ -855,5 +2275,46 @@ impl System {
             }
         }
         matches
+    }
+
+    #[wasm_bindgen]
+    pub fn save_file(&mut self, path: &str, content: &str) -> String {
+        // Check if file exists
+        let normalized_path = self.kernel.fs.normalize(path);
+        if self.kernel.fs.resolve(&normalized_path).is_some() {
+            // Update existing file
+            match self.kernel.fs.write_file(&normalized_path, content) {
+                Ok(()) => String::new(),
+                Err(e) => format!("Error saving file: {}", e),
+            }
+        } else {
+            // Create new file
+            match self.kernel.fs.create_file(path, content) {
+                Ok(()) => String::new(),
+                Err(e) => format!("Error creating file: {}", e),
+            }
+        }
+    }
+
+    /// Export user files as JSON for localStorage persistence
+    #[wasm_bindgen]
+    pub fn export_user_files(&self) -> String {
+        self.kernel.fs.export_user_files()
+    }
+
+    /// Import user files from JSON (called on startup)
+    #[wasm_bindgen]
+    pub fn import_user_files(&mut self, json: &str) {
+        self.kernel.fs.import_user_files(json);
+    }
+
+    #[wasm_bindgen]
+    pub fn check_kernel_panic(&self) -> bool {
+        self.kernel.fs.kernel_panic
+    }
+
+    #[wasm_bindgen]
+    pub fn get_panic_message(&self) -> String {
+        self.kernel.fs.panic_reason.clone()
     }
 }

@@ -41,6 +41,14 @@ web-sys = { version = "0.3", features = [
     "WebGlTexture",
     "WebGlUniformLocation",
     "WebGlBuffer",
+    "AudioContext",
+    "BaseAudioContext",
+    "AudioNode",
+    "AudioDestinationNode",
+    "OscillatorNode",
+    "OscillatorType",
+    "GainNode",
+    "AudioParam",
 ] }
 
 [profile.release]

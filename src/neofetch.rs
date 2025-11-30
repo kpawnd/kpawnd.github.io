@@ -151,7 +151,12 @@ pub fn get_logo(os: &str) -> NeofetchLogo {
 #[wasm_bindgen]
 pub fn neofetch_logo(os: &str) -> String {
     let logo = get_logo(os);
-    logo.lines.join("\n")
+    let color_token = format!("\x1b[COLOR:{}]", logo.color);
+    logo.lines
+        .iter()
+        .map(|line| format!("{}{}", color_token, line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn format_neofetch(

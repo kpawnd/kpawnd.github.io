@@ -7,14 +7,18 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #000; color: #fff; font-family: 'Courier New', monospace; overflow: hidden; width: 100vw; height: 100vh; }
-        #viewport { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(1.04); filter: blur(0.4px); width: 95vw; height: 90vh; image-rendering: pixelated; }
+        #viewport { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 95vw; height: 90vh; image-rendering: pixelated; }
         #terminal { width: 100%; height: 100%; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; background: #000; color: #fff; position: relative; }
         #output { flex: 1; white-space: pre-wrap; word-wrap: break-word; }
         .line { margin: 2px 0; }
         .command { opacity: 0.8; }
         .error { color: #fff; opacity: 0.7; }
         .info { color: #fff; opacity: 0.6; }
-        .boot { color: #fff; animation: fadeIn 0.3s; opacity: 0.75; }
+        .boot { color: #fff; opacity: 1; }
+        .boot-status { font-weight: bold; }
+        .boot-status.ok { color: #0f0; }
+        .boot-status.fail { color: #f00; }
+        .boot-status.warn { color: #ff0; }
         #input-line { display: flex; align-items: center; margin-top: 10px; }
         #prompt { color: #fff; margin-right: 8px; white-space: nowrap; }
         #input { flex: 1; background: transparent; border: none; outline: none; color: #fff; font-family: inherit; font-size: inherit; caret-color: #fff; }
