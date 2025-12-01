@@ -3,8 +3,7 @@ use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    console, MessageEvent, RtcDataChannel, RtcPeerConnection,
-    RtcSdpType, RtcSessionDescriptionInit,
+    console, MessageEvent, RtcDataChannel, RtcPeerConnection, RtcSdpType, RtcSessionDescriptionInit,
 };
 use web_sys::{window, AudioContext, Document, HtmlCanvasElement, OscillatorType};
 
@@ -226,7 +225,9 @@ fn backup_original_map() {
 
 fn restore_original_map() {
     if let Some(m) = ORIGINAL_MAP.lock().unwrap().take() {
-        unsafe { WORLD_MAP = m; }
+        unsafe {
+            WORLD_MAP = m;
+        }
     }
 }
 
@@ -1589,11 +1590,11 @@ pub fn doom_get_player_position() -> js_sys::Array {
 }
 
 thread_local! {
-    static MP_ID: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
-    static MP_PC: std::cell::RefCell<Option<RtcPeerConnection>> = std::cell::RefCell::new(None);
-    static MP_CHAN: std::cell::RefCell<Option<RtcDataChannel>> = std::cell::RefCell::new(None);
-    static MP_INTERVAL: std::cell::RefCell<Option<i32>> = std::cell::RefCell::new(None);
-    static MP_HOSTING: std::cell::RefCell<bool> = std::cell::RefCell::new(false);
+    static MP_ID: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    static MP_PC: std::cell::RefCell<Option<RtcPeerConnection>> = const { std::cell::RefCell::new(None) };
+    static MP_CHAN: std::cell::RefCell<Option<RtcDataChannel>> = const { std::cell::RefCell::new(None) };
+    static MP_INTERVAL: std::cell::RefCell<Option<i32>> = const { std::cell::RefCell::new(None) };
+    static MP_HOSTING: std::cell::RefCell<bool> = const { std::cell::RefCell::new(false) };
 }
 
 fn local_player_id() -> String {
