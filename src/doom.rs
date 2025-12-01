@@ -1,22 +1,16 @@
+use js_sys::Reflect;
 use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    RtcPeerConnection,
-    RtcDataChannel,
-    RtcSessionDescriptionInit,
-    RtcSdpType,
-    RtcPeerConnectionIceEvent,
-    RtcSessionDescription,
-    MessageEvent,
-    console
+    console, MessageEvent, RtcDataChannel, RtcPeerConnection,
+    RtcSdpType, RtcSessionDescriptionInit,
 };
-use js_sys::Reflect;
 use web_sys::{window, AudioContext, Document, HtmlCanvasElement, OscillatorType};
 
 use crate::graphics::Graphics;
 use crate::physics::{circle_wall_collision, raycast_dda, Body, Vec2};
-                                           
+
 #[cfg(feature = "webgl")]
 use crate::graphics_gl::WebGlGraphics;
 
@@ -38,7 +32,8 @@ const MONSTER_TEX_H: usize = 32;
 const NUM_MONSTER_TEXTURES: usize = 2; // basic + elite
 
 // Simple CC0-style procedural textures (generated at init) stored RGB
-static mut TEXTURES: [[u8; TEX_W * TEX_H * 3]; NUM_TEXTURES] = [[0u8; TEX_W * TEX_H * 3]; NUM_TEXTURES];
+static mut TEXTURES: [[u8; TEX_W * TEX_H * 3]; NUM_TEXTURES] =
+    [[0u8; TEX_W * TEX_H * 3]; NUM_TEXTURES];
 static mut MONSTER_TEXTURES: [[u8; MONSTER_TEX_W * MONSTER_TEX_H * 3]; NUM_MONSTER_TEXTURES] =
     [[0u8; MONSTER_TEX_W * MONSTER_TEX_H * 3]; NUM_MONSTER_TEXTURES];
 
@@ -50,7 +45,11 @@ fn init_textures() {
             for x in 0..TEX_W {
                 let idx = (y * TEX_W + x) * 3;
                 let mortar = y % 16 == 15 || (x % 16 == 15);
-                let (r, g, b) = if mortar { (180, 175, 170) } else { (150 + (x % 16) as u8, 40, 40) };
+                let (r, g, b) = if mortar {
+                    (180, 175, 170)
+                } else {
+                    (150 + (x % 16) as u8, 40, 40)
+                };
                 TEXTURES[0][idx] = r;
                 TEXTURES[0][idx + 1] = g;
                 TEXTURES[0][idx + 2] = b;
@@ -81,7 +80,8 @@ fn init_textures() {
         for y in 0..TEX_H {
             for x in 0..TEX_W {
                 let idx = (y * TEX_W + x) * 3;
-                let grain = ((x as f32 * 0.3).sin() * 10.0) as i32 + ((y as f32 * 0.15).cos() * 8.0) as i32;
+                let grain =
+                    ((x as f32 * 0.3).sin() * 10.0) as i32 + ((y as f32 * 0.15).cos() * 8.0) as i32;
                 let base = 100 + (grain.clamp(-20, 30)) as u8;
                 TEXTURES[3][idx] = base + 30;
                 TEXTURES[3][idx + 1] = base + 10;
@@ -104,7 +104,8 @@ fn init_textures() {
             for x in 0..MONSTER_TEX_W {
                 let idx = (y * MONSTER_TEX_W + x) * 3;
                 // Texture 0: red demon with darker edges
-                let edge = !(2..=MONSTER_TEX_W - 3).contains(&x) || !(2..=MONSTER_TEX_H - 3).contains(&y);
+                let edge =
+                    !(2..=MONSTER_TEX_W - 3).contains(&x) || !(2..=MONSTER_TEX_H - 3).contains(&y);
                 let r = if edge { 120 } else { 200 - (y as u8 / 2) };
                 let g = if edge { 20 } else { 40 + (x as u8 / 4) };
                 let b = if edge { 20 } else { 30 };
@@ -212,21 +213,20 @@ fn init_world_map() {
     }
 }
 
-static mut ORIGINAL_MAP: Option<[i32; MAP_W * MAP_H]> = None;
+use std::sync::Mutex;
+static ORIGINAL_MAP: Mutex<Option<[i32; MAP_W * MAP_H]>> = Mutex::new(None);
 
 fn backup_original_map() {
-    unsafe {
-        if ORIGINAL_MAP.is_none() {
-            ORIGINAL_MAP = Some(WORLD_MAP);
-        }
+    let mut guard = ORIGINAL_MAP.lock().unwrap();
+    if guard.is_none() {
+        let current = unsafe { WORLD_MAP };
+        *guard = Some(current);
     }
 }
 
 fn restore_original_map() {
-    unsafe {
-        if let Some(m) = ORIGINAL_MAP {
-            WORLD_MAP = m;
-        }
+    if let Some(m) = ORIGINAL_MAP.lock().unwrap().take() {
+        unsafe { WORLD_MAP = m; }
     }
 }
 
@@ -302,21 +302,46 @@ thread_local! {
 }
 
 fn encode_sdp(s: &str) -> String {
-    console::log_1(&JsValue::from_str(&format!("[encode_sdp] Input length: {}, has CRLF: {}", s.len(), s.contains("\r\n"))));
+    console::log_1(&JsValue::from_str(&format!(
+        "[encode_sdp] Input length: {}, has CRLF: {}",
+        s.len(),
+        s.contains("\r\n")
+    )));
     // Filter out a=max-message-size before encoding - preserve exact line structure
     let lines: Vec<&str> = s.split("\r\n").collect();
-    console::log_1(&JsValue::from_str(&format!("[encode_sdp] Split into {} lines", lines.len())));
-    let filtered: Vec<&str> = lines.into_iter().filter(|line| !line.starts_with("a=max-message-size:")).collect();
-    console::log_1(&JsValue::from_str(&format!("[encode_sdp] After filter: {} lines", filtered.len())));
+    console::log_1(&JsValue::from_str(&format!(
+        "[encode_sdp] Split into {} lines",
+        lines.len()
+    )));
+    let filtered: Vec<&str> = lines
+        .into_iter()
+        .filter(|line| !line.starts_with("a=max-message-size:"))
+        .collect();
+    console::log_1(&JsValue::from_str(&format!(
+        "[encode_sdp] After filter: {} lines",
+        filtered.len()
+    )));
     let joined = filtered.join("\r\n");
-    console::log_1(&JsValue::from_str(&format!("[encode_sdp] Joined length: {}, first 50: {:?}", joined.len(), &joined.chars().take(50).collect::<String>())));
+    console::log_1(&JsValue::from_str(&format!(
+        "[encode_sdp] Joined length: {}, first 50: {:?}",
+        joined.len(),
+        &joined.chars().take(50).collect::<String>()
+    )));
     window().unwrap().btoa(&joined).unwrap_or_default()
 }
 
 fn decode_sdp(s: &str) -> String {
-    console::log_1(&JsValue::from_str(&format!("[decode_sdp] Input base64 length: {}", s.len())));
+    console::log_1(&JsValue::from_str(&format!(
+        "[decode_sdp] Input base64 length: {}",
+        s.len()
+    )));
     let raw = window().unwrap().atob(s).unwrap_or_default();
-    console::log_1(&JsValue::from_str(&format!("[decode_sdp] Decoded length: {}, starts with v=: {}, first 50 chars: {:?}", raw.len(), raw.starts_with("v="), &raw.chars().take(50).collect::<String>())));
+    console::log_1(&JsValue::from_str(&format!(
+        "[decode_sdp] Decoded length: {}, starts with v=: {}, first 50 chars: {:?}",
+        raw.len(),
+        raw.starts_with("v="),
+        &raw.chars().take(50).collect::<String>()
+    )));
     raw
 }
 
@@ -448,7 +473,7 @@ impl DoomGame {
 
     fn enable_procedural(&mut self) {
         self.procedural = true;
-        unsafe { generate_procedural_world(); }
+        generate_procedural_world();
     }
 
     fn update(&mut self, dt: f64) -> bool {
@@ -513,7 +538,10 @@ impl DoomGame {
         self.player_body.apply_force(force);
 
         // Spawn ammo pickups periodically if low
-        if (self.game_time - self.last_ammo_spawn_time) > 6000.0 && self.ammo < 100 && self.ammo_pickups.len() < 6 {
+        if (self.game_time - self.last_ammo_spawn_time) > 6000.0
+            && self.ammo < 100
+            && self.ammo_pickups.len() < 6
+        {
             // Find a free tile
             for _ in 0..20 {
                 let x = 2.0 + js_sys::Math::random() * (MAP_W as f64 - 4.0);
@@ -538,7 +566,8 @@ impl DoomGame {
         });
 
         // Passive ammo trickle if completely dry (avoid soft-lock)
-        if self.ammo == 0 && (self.game_time as i32 % 1000) < 16 { // roughly every second
+        if self.ammo == 0 && (self.game_time as i32 % 1000) < 16 {
+            // roughly every second
             self.ammo += 1;
         }
 
@@ -964,7 +993,9 @@ impl DoomGame {
             unsafe {
                 for sy in draw_start..draw_end {
                     let d_y = sy - draw_start;
-                    let tex_y = ((d_y as f64 / (draw_end - draw_start) as f64) * TEX_H as f64) as usize & (TEX_H - 1);
+                    let tex_y = ((d_y as f64 / (draw_end - draw_start) as f64) * TEX_H as f64)
+                        as usize
+                        & (TEX_H - 1);
                     let base = (tex_y * TEX_W + tex_x) * 3;
                     let mut r = TEXTURES[tex_index][base] as f32;
                     let mut g = TEXTURES[tex_index][base + 1] as f32;
@@ -983,14 +1014,16 @@ impl DoomGame {
             let sprite_pos = ap.sub(&self.player_body.position);
             let inv_det = 1.0 / (self.plane.x * self.dir.y - self.dir.x * self.plane.y);
             let transform_x = inv_det * (self.dir.y * sprite_pos.x - self.dir.x * sprite_pos.y);
-            let transform_y = inv_det * (-self.plane.y * sprite_pos.x + self.plane.x * sprite_pos.y);
+            let transform_y =
+                inv_det * (-self.plane.y * sprite_pos.x + self.plane.x * sprite_pos.y);
             if transform_y > 0.1 && transform_y < 20.0 {
                 let screen_x = ((w as f64 / 2.0) * (1.0 + transform_x / transform_y)) as i32;
                 let size = ((10.0 / transform_y).abs() as i32).clamp(2, 12);
                 if screen_x >= 0 && screen_x < w as i32 {
                     for dy in -size..=size {
                         for dx in -size..=size {
-                            if dx.abs() + dy.abs() < size { // diamond shape
+                            if dx.abs() + dy.abs() < size {
+                                // diamond shape
                                 let px = screen_x + dx;
                                 let py = half_h as i32 + dy;
                                 if px >= 0 && px < w as i32 && py >= 0 && py < h as i32 {
@@ -1008,7 +1041,8 @@ impl DoomGame {
             let sprite_pos = rp.body.position.sub(&self.player_body.position);
             let inv_det = 1.0 / (self.plane.x * self.dir.y - self.dir.x * self.plane.y);
             let transform_x = inv_det * (self.dir.y * sprite_pos.x - self.dir.x * sprite_pos.y);
-            let transform_y = inv_det * (-self.plane.y * sprite_pos.x + self.plane.x * sprite_pos.y);
+            let transform_y =
+                inv_det * (-self.plane.y * sprite_pos.x + self.plane.x * sprite_pos.y);
             if transform_y > 0.1 && transform_y < 25.0 {
                 let screen_x = ((w as f64 / 2.0) * (1.0 + transform_x / transform_y)) as i32;
                 let size = ((14.0 / transform_y).abs() as i32).clamp(2, 16);
@@ -1151,8 +1185,10 @@ impl DoomGame {
                         let tex_y = (y as i32 - (half_h as i32 - sprite_height / 2)) as f64
                             / sprite_height as f64;
                         if (0.0..=1.0).contains(&tex_x) && (0.0..=1.0).contains(&tex_y) {
-                            let sx = (tex_x * (MONSTER_TEX_W as f64)) as usize & (MONSTER_TEX_W - 1);
-                            let sy = (tex_y * (MONSTER_TEX_H as f64)) as usize & (MONSTER_TEX_H - 1);
+                            let sx =
+                                (tex_x * (MONSTER_TEX_W as f64)) as usize & (MONSTER_TEX_W - 1);
+                            let sy =
+                                (tex_y * (MONSTER_TEX_H as f64)) as usize & (MONSTER_TEX_H - 1);
                             let base = (sy * MONSTER_TEX_W + sx) * 3;
                             unsafe {
                                 let mut r = MONSTER_TEXTURES[tex_index][base] as f32;
@@ -1271,13 +1307,15 @@ impl DoomGame {
         // Ammo / weapon indicator
         let ammo_x = w - 140;
         let ammo_y = h - 55;
-        if self.current_weapon == 0 { // infinite pistol
-            self.draw_text(gfx, "AMMO", ammo_x, ammo_y, (200,200,200));
-            self.draw_text(gfx, "INF", ammo_x, ammo_y + 16, (255,255,0));
+        if self.current_weapon == 0 {
+            // infinite pistol
+            self.draw_text(gfx, "AMMO", ammo_x, ammo_y, (200, 200, 200));
+            self.draw_text(gfx, "INF", ammo_x, ammo_y + 16, (255, 255, 0));
         } else {
-            self.draw_text(gfx, "AMMO", ammo_x, ammo_y, (200,200,200));
+            self.draw_text(gfx, "AMMO", ammo_x, ammo_y, (200, 200, 200));
             self.draw_number(gfx, self.ammo, ammo_x, ammo_y + 16);
-            if self.ammo < 10 { // low ammo flash border
+            if self.ammo < 10 {
+                // low ammo flash border
                 gfx.draw_rect(ammo_x - 4, ammo_y + 12, 70, 22, 255, 0, 0);
             }
         }
@@ -1291,16 +1329,16 @@ impl DoomGame {
         let diff_x = 20;
         let diff_y = 20;
         let (diff_str, diff_color) = match self.difficulty {
-            Difficulty::Easy => ("EASY", (0,255,0)),
-            Difficulty::Normal => ("NORMAL", (255,255,0)),
-            Difficulty::Hard => ("HARD", (255,0,0)),
+            Difficulty::Easy => ("EASY", (0, 255, 0)),
+            Difficulty::Normal => ("NORMAL", (255, 255, 0)),
+            Difficulty::Hard => ("HARD", (255, 0, 0)),
         };
         self.draw_text(gfx, diff_str, diff_x, diff_y, diff_color);
 
         // Remote player count (multiplayer indicator)
         if !self.remote_players.is_empty() {
             let mp_str = format!("MP:{}", self.remote_players.len());
-            self.draw_text(gfx, &mp_str, diff_x, diff_y + 18, (0,180,255));
+            self.draw_text(gfx, &mp_str, diff_x, diff_y + 18, (0, 180, 255));
         }
 
         // Crosshair
@@ -1426,7 +1464,7 @@ impl DoomGame {
         }
     }
 
-    fn draw_text(&self, gfx: &mut Renderer, text: &str, x: u32, y: u32, color: (u8,u8,u8)) {
+    fn draw_text(&self, gfx: &mut Renderer, text: &str, x: u32, y: u32, color: (u8, u8, u8)) {
         // 5x7 uppercase font (subset) scaled by 2
         const SCALE: u32 = 2;
         const W: u32 = 5;
@@ -1490,10 +1528,15 @@ struct RemotePlayer {
 pub fn doom_add_remote_player(id: &str, x: f64, y: f64) {
     GAME.with(|gm| {
         if let Some(ref mut game) = *gm.borrow_mut() {
-            if game.remote_players.iter().any(|p| p.id == id) { return; }
+            if game.remote_players.iter().any(|p| p.id == id) {
+                return;
+            }
             let mut body = Body::new(x, y, 0.3);
             body.friction = 0.3;
-            game.remote_players.push(RemotePlayer { id: id.to_string(), body });
+            game.remote_players.push(RemotePlayer {
+                id: id.to_string(),
+                body,
+            });
         }
     });
 }
@@ -1566,12 +1609,18 @@ fn local_player_id() -> String {
 
 fn broadcast_position() {
     let pid = local_player_id();
-    let (x,y) = GAME.with(|gm| {
-        if let Some(ref g) = *gm.borrow() { (g.player_body.position.x, g.player_body.position.y) } else { (0.0,0.0) }
+    let (x, y) = GAME.with(|gm| {
+        if let Some(ref g) = *gm.borrow() {
+            (g.player_body.position.x, g.player_body.position.y)
+        } else {
+            (0.0, 0.0)
+        }
     });
     let msg = serde_json::json!({"t":"pos","id":pid,"x":x,"y":y}).to_string();
     MP_CHAN.with(|ch| {
-        if let Some(ref dc) = *ch.borrow() { let _ = dc.send_with_str(&msg); }
+        if let Some(ref dc) = *ch.borrow() {
+            let _ = dc.send_with_str(&msg);
+        }
     });
 }
 
@@ -1579,7 +1628,9 @@ fn handle_incoming(data: &str) {
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
         let t = val.get("t").and_then(|v| v.as_str()).unwrap_or("");
         let id = val.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        if id == local_player_id() { return; } // ignore own
+        if id == local_player_id() {
+            return;
+        } // ignore own
         match t {
             "join" => {
                 let x = val.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -1587,8 +1638,12 @@ fn handle_incoming(data: &str) {
                 GAME.with(|gm| {
                     if let Some(ref mut g) = *gm.borrow_mut() {
                         if !g.remote_players.iter().any(|p| p.id == id) {
-                            let mut body = Body::new(x,y,0.3); body.friction = 0.3;
-                            g.remote_players.push(RemotePlayer { id: id.to_string(), body });
+                            let mut body = Body::new(x, y, 0.3);
+                            body.friction = 0.3;
+                            g.remote_players.push(RemotePlayer {
+                                id: id.to_string(),
+                                body,
+                            });
                         }
                     }
                 });
@@ -1619,16 +1674,26 @@ fn handle_incoming(data: &str) {
 
 fn setup_interval() {
     MP_INTERVAL.with(|iv| {
-        if iv.borrow().is_some() { return; }
-        let cb = Closure::<dyn FnMut()>::wrap(Box::new(|| broadcast_position()));
-        let handle = window().unwrap().set_interval_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 200).unwrap();
+        if iv.borrow().is_some() {
+            return;
+        }
+        let cb = Closure::<dyn FnMut()>::wrap(Box::new(broadcast_position));
+        let handle = window()
+            .unwrap()
+            .set_interval_with_callback_and_timeout_and_arguments_0(
+                cb.as_ref().unchecked_ref(),
+                200,
+            )
+            .unwrap();
         cb.forget();
         *iv.borrow_mut() = Some(handle);
     });
 }
 
 #[wasm_bindgen]
-pub fn mp_id() -> String { local_player_id() }
+pub fn mp_id() -> String {
+    local_player_id()
+}
 
 #[wasm_bindgen]
 pub async fn mp_host() -> Result<String, JsValue> {
@@ -1637,14 +1702,18 @@ pub async fn mp_host() -> Result<String, JsValue> {
     let channel = pc.create_data_channel("doom");
     MP_CHAN.with(|c| *c.borrow_mut() = Some(channel.clone()));
     let onmsg = Closure::<dyn FnMut(MessageEvent)>::wrap(Box::new(|e: MessageEvent| {
-        if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() { handle_incoming(&String::from(txt)); }
+        if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+            handle_incoming(&String::from(txt));
+        }
     }));
     channel.set_onmessage(Some(onmsg.as_ref().unchecked_ref()));
     onmsg.forget();
     MP_PC.with(|p| *p.borrow_mut() = Some(pc.clone()));
     let offer = wasm_bindgen_futures::JsFuture::from(pc.create_offer()).await?;
-    let offer_sdp_initial = Reflect::get(&offer, &JsValue::from_str("sdp"))?.as_string().unwrap_or_default();
-    let mut desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
+    let offer_sdp_initial = Reflect::get(&offer, &JsValue::from_str("sdp"))?
+        .as_string()
+        .unwrap_or_default();
+    let desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
     desc.set_sdp(&offer_sdp_initial);
     wasm_bindgen_futures::JsFuture::from(pc.set_local_description(&desc)).await?;
     // Return initial SDP (without waiting for full ICE gathering to avoid unsupported APIs)
@@ -1658,14 +1727,19 @@ pub async fn mp_join(code: &str) -> Result<String, JsValue> {
     let offer_enc = parts.next().unwrap_or("");
     let host_id = parts.next().unwrap_or("");
     let offer_sdp = decode_sdp(offer_enc);
-    console::log_1(&JsValue::from_str(&format!("[MP_JOIN] Decoded SDP:\n{}", offer_sdp)));
+    console::log_1(&JsValue::from_str(&format!(
+        "[MP_JOIN] Decoded SDP:\n{}",
+        offer_sdp
+    )));
     let pc = RtcPeerConnection::new()?;
     MP_PC.with(|p| *p.borrow_mut() = Some(pc.clone()));
     let ondc = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(|e: web_sys::Event| {
         if let Some(dc) = e.target().and_then(|t| t.dyn_into::<RtcDataChannel>().ok()) {
             MP_CHAN.with(|c| *c.borrow_mut() = Some(dc.clone()));
             let onmsg = Closure::<dyn FnMut(MessageEvent)>::wrap(Box::new(|ev: MessageEvent| {
-                if let Ok(txt) = ev.data().dyn_into::<js_sys::JsString>() { handle_incoming(&String::from(txt)); }
+                if let Ok(txt) = ev.data().dyn_into::<js_sys::JsString>() {
+                    handle_incoming(&String::from(txt));
+                }
             }));
             dc.set_onmessage(Some(onmsg.as_ref().unchecked_ref()));
             onmsg.forget();
@@ -1673,7 +1747,11 @@ pub async fn mp_join(code: &str) -> Result<String, JsValue> {
             let onopen = Closure::<dyn FnMut()>::wrap(Box::new(|| {
                 let pid = local_player_id();
                 let msg = serde_json::json!({"t":"join","id":pid}).to_string();
-                MP_CHAN.with(|c| if let Some(ref ch)=*c.borrow() { let _ = ch.send_with_str(&msg); });
+                MP_CHAN.with(|c| {
+                    if let Some(ref ch) = *c.borrow() {
+                        let _ = ch.send_with_str(&msg);
+                    }
+                });
             }));
             dc.set_onopen(Some(onopen.as_ref().unchecked_ref()));
             onopen.forget();
@@ -1681,11 +1759,13 @@ pub async fn mp_join(code: &str) -> Result<String, JsValue> {
     }));
     pc.set_ondatachannel(Some(ondc.as_ref().unchecked_ref()));
     ondc.forget();
-    let mut offer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
+    let offer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
     offer_desc.set_sdp(&offer_sdp);
     wasm_bindgen_futures::JsFuture::from(pc.set_remote_description(&offer_desc)).await?;
     let answer = wasm_bindgen_futures::JsFuture::from(pc.create_answer()).await?;
-    let answer_sdp_initial = Reflect::get(&answer, &JsValue::from_str("sdp"))?.as_string().unwrap_or_default();
+    let answer_sdp_initial = Reflect::get(&answer, &JsValue::from_str("sdp"))?
+        .as_string()
+        .unwrap_or_default();
     let answer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
     answer_desc.set_sdp(&answer_sdp_initial);
     wasm_bindgen_futures::JsFuture::from(pc.set_local_description(&answer_desc)).await?;
@@ -1700,17 +1780,22 @@ pub async fn mp_finalize(answer_code: &str) -> Result<(), JsValue> {
     let answer_enc = parts.next().unwrap_or("");
     let _host_id = parts.next().unwrap_or("");
     let answer_sdp = decode_sdp(answer_enc);
-    console::log_1(&JsValue::from_str(&format!("[MP_FINALIZE] Decoded SDP:\n{}", answer_sdp)));
-    let mut answer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
+    console::log_1(&JsValue::from_str(&format!(
+        "[MP_FINALIZE] Decoded SDP:\n{}",
+        answer_sdp
+    )));
+    let answer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
     answer_desc.set_sdp(&answer_sdp);
     let pc_opt = MP_PC.with(|p| p.borrow().clone());
     if let Some(pc) = pc_opt {
         wasm_bindgen_futures::JsFuture::from(pc.set_remote_description(&answer_desc)).await?;
         // After channel open send join
-        MP_CHAN.with(|c| if let Some(ref ch)=*c.borrow() {
-            let pid = local_player_id();
-            let msg = serde_json::json!({"t":"join","id":pid}).to_string();
-            let _ = ch.send_with_str(&msg);
+        MP_CHAN.with(|c| {
+            if let Some(ref ch) = *c.borrow() {
+                let pid = local_player_id();
+                let msg = serde_json::json!({"t":"join","id":pid}).to_string();
+                let _ = ch.send_with_str(&msg);
+            }
         });
         setup_interval();
     }
@@ -1719,9 +1804,18 @@ pub async fn mp_finalize(answer_code: &str) -> Result<(), JsValue> {
 
 #[wasm_bindgen]
 pub fn mp_disconnect() {
-    MP_INTERVAL.with(|iv| { if let Some(id)=*iv.borrow() { let _ = window().unwrap().clear_interval_with_handle(id); } *iv.borrow_mut()=None; });
+    MP_INTERVAL.with(|iv| {
+        if let Some(id) = *iv.borrow() {
+            window().unwrap().clear_interval_with_handle(id);
+        }
+        *iv.borrow_mut() = None;
+    });
     MP_CHAN.with(|c| *c.borrow_mut() = None);
-    MP_PC.with(|p| if let Some(pc)=p.borrow().clone() { let _ = pc.close(); });
+    MP_PC.with(|p| {
+        if let Some(pc) = p.borrow().clone() {
+            pc.close();
+        }
+    });
 }
 
 impl Monster {

@@ -257,7 +257,6 @@ impl System {
                     .unwrap_or_else(|| "user".into());
                 format!("uid=1000({}) gid=1000({})", user, user)
             }
-            
             "whoami" => self
                 .shell
                 .env
@@ -1729,8 +1728,8 @@ DESCRIPTION
                 .into()
             }
 
-                 "doom" => {
-                  r#"DOOM(1)                          User Commands                         DOOM(1)
+            "doom" => {
+                r#"DOOM(1)                          User Commands                         DOOM(1)
 
         NAME
             doom - play a game
@@ -1748,11 +1747,11 @@ DESCRIPTION
             normal  Balanced baseline (default)
             hard    More monsters, higher damage, lower player health
         "#
-                  .into()
-                 }
+                .into()
+            }
 
-                 "doommap" => {
-                  r#"DOOMMAP(1)                       User Commands                      DOOMMAP(1)
+            "doommap" => {
+                r#"DOOMMAP(1)                       User Commands                      DOOMMAP(1)
 
         NAME
             doommap - control procedural map generation for doom
@@ -1766,8 +1765,9 @@ DESCRIPTION
             'proc' will generate a new procedural layout (rooms/corridors) without
             permanently destroying the original; 'restore' returns to the original map.
 
-        "#.into()
-                 }
+        "#
+                .into()
+            }
 
             "man" => {
                 r#"MAN(1)                           User Commands                          MAN(1)
