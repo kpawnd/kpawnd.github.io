@@ -12,11 +12,27 @@ let historyIndex = -1;
 let passwordBuffer = '';
 
 let start_doom;
+let start_doom_with_difficulty;
+let doom_enable_procedural;
+let doom_restore_original_map;
+let mp_host_fn;
+let mp_join_fn;
+let mp_finalize_fn;
+let mp_id_fn;
+let mp_disconnect_fn;
 let start_screensaver;
 
 export function initTerminal(wasm) {
   start_doom = wasm.start_doom;
+  start_doom_with_difficulty = wasm.start_doom_with_difficulty || wasm.start_doom;
   start_screensaver = wasm.start_screensaver;
+  doom_enable_procedural = wasm.doom_enable_procedural;
+  doom_restore_original_map = wasm.doom_restore_original_map;
+  mp_host_fn = wasm.mp_host;
+  mp_join_fn = wasm.mp_join;
+  mp_finalize_fn = wasm.mp_finalize;
+  mp_id_fn = wasm.mp_id;
+  mp_disconnect_fn = wasm.mp_disconnect;
 }
 
 export function setupTerminal() {
@@ -205,10 +221,95 @@ export async function handleCommand(cmd) {
     print('Python 3.11.0 (sandboxed, Rust-backed)', 'info');
     print('Type "exit()" to exit', 'info');
     document.getElementById('prompt').textContent = '>>> ';
-  } else if (result.startsWith('\x1b[LAUNCH_DOOM]') || result.startsWith('\x1b[LAUNCH_SNAKE]')) {
+  } else if (result.startsWith('\x1b[DOOM_ENABLE_PROC]')) {
+    if (typeof doom_enable_procedural === 'function') {
+      doom_enable_procedural();
+      print('Procedural map enabled.', 'info');
+    } else {
+      print('Procedural map API not available.', 'error');
+    }
+  } else if (result.startsWith('\x1b[DOOM_RESTORE]')) {
+    if (typeof doom_restore_original_map === 'function') {
+      doom_restore_original_map();
+      print('Original map restored.', 'info');
+    } else {
+      print('Restore map API not available.', 'error');
+    }
+  } else if (result.startsWith('\x1b[LAUNCH_DOOM')) {
+    // Matches \x1b[LAUNCH_DOOM] or \x1b[LAUNCH_DOOM:<n>] even if additional text follows
+    const match = /\x1b\[LAUNCH_DOOM(?::(\d))?\]/.exec(result);
+    if (match && match[1]) {
+      const diff = parseInt(match[1], 10);
+      start_doom_with_difficulty(diff);
+    } else {
+      start_doom();
+    }
+  } else if (result.startsWith('\x1b[LAUNCH_SNAKE]')) {
     start_doom();
   } else if (result.startsWith('\x1b[LAUNCH_SCREENSAVER]')) {
     start_screensaver();
+  } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
+    try {
+      if (!window.GraceDesktop) {
+        await import('./grace.js');
+      }
+      window.GraceDesktop.launch();
+      // Hide terminal UI while desktop is active
+      const term = document.getElementById('terminal');
+      if (term) term.style.display = 'none';
+      // Allow returning to terminal via event
+      document.addEventListener('GRACE:OPEN_TERMINAL', () => {
+        const termEl = document.getElementById('terminal');
+        if (termEl) termEl.style.display = '';
+        const root = document.querySelector('.grace-root');
+        if (root) root.style.display = 'none';
+      }, { once: true });
+    } catch (e) {
+      print(`Failed to launch Grace: ${e}`, 'error');
+    }
+  } else if (result.startsWith('\x1b[MP_HOST]')) {
+    (async () => {
+      try {
+        if (typeof mp_host_fn !== 'function') { throw new Error('mp_host not available'); }
+        const code = await mp_host_fn();
+        print(`Room code (share this): ${code}`, 'info');
+      } catch (e) {
+        print(`Failed to host: ${e}`, 'error');
+      }
+    })();
+  } else if (result.startsWith('\x1b[MP_JOIN:')) {
+    const code = result.slice(10, -1);
+    (async () => {
+      try {
+        if (typeof mp_join_fn !== 'function') { throw new Error('mp_join not available'); }
+        const answer = await mp_join_fn(code);
+        print(`Answer code (send back to host): ${answer}`, 'info');
+      } catch (e) {
+        print(`Join failed: ${e}`, 'error');
+      }
+    })();
+  } else if (result.startsWith('\x1b[MP_FINALIZE:')) {
+    const answer = result.slice(15, -1);
+    (async () => {
+      try {
+        if (typeof mp_finalize_fn !== 'function') { throw new Error('mp_finalize not available'); }
+        await mp_finalize_fn(answer);
+        print('Connection established.', 'info');
+      } catch (e) {
+        print(`Finalize failed: ${e}`, 'error');
+      }
+    })();
+  } else if (result.startsWith('\x1b[MP_ID]')) {
+    if (typeof mp_id_fn === 'function') {
+      print(`Peer ID: ${mp_id_fn()}`, 'info');
+    } else {
+      print('Peer ID not available', 'error');
+    }
+  } else if (result.startsWith('\x1b[MP_DISCONNECT]')) {
+    if (typeof mp_disconnect_fn === 'function') {
+      mp_disconnect_fn();
+    }
+    print('Disconnected.', 'info');
   } else if (result.startsWith('\x1b[FETCH:')) {
     await fetchUrl(result.slice(8, -1));
   } else if (result.startsWith('\x1b[CURL:')) {

@@ -5,7 +5,15 @@ import init, {
   NanoEditor,
   neofetch_logo,
   start_doom,
+  start_doom_with_difficulty,
   start_screensaver,
+  doom_enable_procedural,
+  doom_restore_original_map,
+  mp_host,
+  mp_join,
+  mp_finalize,
+  mp_id,
+  mp_disconnect,
   fetch_http,
   curl_request,
   ping_request,
@@ -31,8 +39,21 @@ async function main() {
     // Initialize WASM modules in JS modules
     initNano({ NanoEditor });
     initNeofetch({ neofetch_logo });
-    initTerminal({ start_doom, start_screensaver });
+    initTerminal({ 
+      start_doom, 
+      start_doom_with_difficulty, 
+      start_screensaver, 
+      doom_enable_procedural, 
+      doom_restore_original_map,
+      mp_host,
+      mp_join,
+      mp_finalize,
+      mp_id,
+      mp_disconnect
+    });
     initNetwork({ fetch_http, curl_request, ping_request, dns_lookup, get_public_ip });
+    // Multiplayer handled fully in Rust now; use console to connect:
+    // doom_multiplayer_connect('ws://localhost:8081')
     
     // Create system instances
     setSystem(new System());

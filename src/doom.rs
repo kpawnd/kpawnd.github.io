@@ -1,11 +1,22 @@
 use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use web_sys::{
+    RtcPeerConnection,
+    RtcDataChannel,
+    RtcSessionDescriptionInit,
+    RtcSdpType,
+    RtcPeerConnectionIceEvent,
+    RtcSessionDescription,
+    MessageEvent,
+    console
+};
+use js_sys::Reflect;
 use web_sys::{window, AudioContext, Document, HtmlCanvasElement, OscillatorType};
 
 use crate::graphics::Graphics;
 use crate::physics::{circle_wall_collision, raycast_dda, Body, Vec2};
-
+                                           
 #[cfg(feature = "webgl")]
 use crate::graphics_gl::WebGlGraphics;
 
@@ -17,6 +28,102 @@ type Renderer = WebGlGraphics;
 // Game constants
 const MAP_W: usize = 32;
 const MAP_H: usize = 32;
+const TEX_W: usize = 64;
+const TEX_H: usize = 64;
+
+// Number of procedural textures (brick, stone, metal, crate, pillar)
+const NUM_TEXTURES: usize = 5;
+const MONSTER_TEX_W: usize = 32;
+const MONSTER_TEX_H: usize = 32;
+const NUM_MONSTER_TEXTURES: usize = 2; // basic + elite
+
+// Simple CC0-style procedural textures (generated at init) stored RGB
+static mut TEXTURES: [[u8; TEX_W * TEX_H * 3]; NUM_TEXTURES] = [[0u8; TEX_W * TEX_H * 3]; NUM_TEXTURES];
+static mut MONSTER_TEXTURES: [[u8; MONSTER_TEX_W * MONSTER_TEX_H * 3]; NUM_MONSTER_TEXTURES] =
+    [[0u8; MONSTER_TEX_W * MONSTER_TEX_H * 3]; NUM_MONSTER_TEXTURES];
+
+fn init_textures() {
+    // Procedural generation ensures no copyright issues (all math-generated)
+    unsafe {
+        // 0: Brick wall
+        for y in 0..TEX_H {
+            for x in 0..TEX_W {
+                let idx = (y * TEX_W + x) * 3;
+                let mortar = y % 16 == 15 || (x % 16 == 15);
+                let (r, g, b) = if mortar { (180, 175, 170) } else { (150 + (x % 16) as u8, 40, 40) };
+                TEXTURES[0][idx] = r;
+                TEXTURES[0][idx + 1] = g;
+                TEXTURES[0][idx + 2] = b;
+            }
+        }
+        // 1: Stone blocks
+        for y in 0..TEX_H {
+            for x in 0..TEX_W {
+                let idx = (y * TEX_W + x) * 3;
+                let shade = 120 + (((x ^ y) & 15) as u8);
+                TEXTURES[1][idx] = shade;
+                TEXTURES[1][idx + 1] = shade - 10;
+                TEXTURES[1][idx + 2] = shade - 20;
+            }
+        }
+        // 2: Metal panel
+        for y in 0..TEX_H {
+            for x in 0..TEX_W {
+                let idx = (y * TEX_W + x) * 3;
+                let stripe = (x / 8) % 2 == 0;
+                let base = if stripe { 160 } else { 110 };
+                TEXTURES[2][idx] = base;
+                TEXTURES[2][idx + 1] = base;
+                TEXTURES[2][idx + 2] = base + 20;
+            }
+        }
+        // 3: Crate wood
+        for y in 0..TEX_H {
+            for x in 0..TEX_W {
+                let idx = (y * TEX_W + x) * 3;
+                let grain = ((x as f32 * 0.3).sin() * 10.0) as i32 + ((y as f32 * 0.15).cos() * 8.0) as i32;
+                let base = 100 + (grain.clamp(-20, 30)) as u8;
+                TEXTURES[3][idx] = base + 30;
+                TEXTURES[3][idx + 1] = base + 10;
+                TEXTURES[3][idx + 2] = base;
+            }
+        }
+        // 4: Pillar marble
+        for y in 0..TEX_H {
+            for x in 0..TEX_W {
+                let idx = (y * TEX_W + x) * 3;
+                let swirl = ((x as f32 * 0.2).sin() + (y as f32 * 0.3).cos()) * 0.5 + 0.5;
+                let shade = (200.0 * swirl) as u8;
+                TEXTURES[4][idx] = shade;
+                TEXTURES[4][idx + 1] = shade;
+                TEXTURES[4][idx + 2] = shade - 10;
+            }
+        }
+        // Monster textures
+        for y in 0..MONSTER_TEX_H {
+            for x in 0..MONSTER_TEX_W {
+                let idx = (y * MONSTER_TEX_W + x) * 3;
+                // Texture 0: red demon with darker edges
+                let edge = !(2..=MONSTER_TEX_W - 3).contains(&x) || !(2..=MONSTER_TEX_H - 3).contains(&y);
+                let r = if edge { 120 } else { 200 - (y as u8 / 2) };
+                let g = if edge { 20 } else { 40 + (x as u8 / 4) };
+                let b = if edge { 20 } else { 30 };
+                MONSTER_TEXTURES[0][idx] = r;
+                MONSTER_TEXTURES[0][idx + 1] = g;
+                MONSTER_TEXTURES[0][idx + 2] = b;
+
+                // Texture 1: elite demon (purple)
+                let idx1 = idx;
+                let r2 = if edge { 80 } else { 150 + ((x ^ y) & 15) as u8 };
+                let g2 = 40 + (y as u8 / 3);
+                let b2 = if edge { 120 } else { 200 - (x as u8 / 2) };
+                MONSTER_TEXTURES[1][idx1] = r2;
+                MONSTER_TEXTURES[1][idx1 + 1] = g2;
+                MONSTER_TEXTURES[1][idx1 + 2] = b2;
+            }
+        }
+    }
+}
 
 // Difficulty settings
 #[derive(Clone, Copy, PartialEq)]
@@ -105,6 +212,65 @@ fn init_world_map() {
     }
 }
 
+static mut ORIGINAL_MAP: Option<[i32; MAP_W * MAP_H]> = None;
+
+fn backup_original_map() {
+    unsafe {
+        if ORIGINAL_MAP.is_none() {
+            ORIGINAL_MAP = Some(WORLD_MAP);
+        }
+    }
+}
+
+fn restore_original_map() {
+    unsafe {
+        if let Some(m) = ORIGINAL_MAP {
+            WORLD_MAP = m;
+        }
+    }
+}
+
+fn generate_procedural_world() {
+    backup_original_map();
+    unsafe {
+        for i in 0..MAP_W * MAP_H {
+            WORLD_MAP[i] = 1;
+        }
+        for y in 1..MAP_H - 1 {
+            for x in 1..MAP_W - 1 {
+                WORLD_MAP[x + y * MAP_W] = 0;
+            }
+        }
+        // pillars
+        for _ in 0..40 {
+            let x = 2 + (js_sys::Math::random() * (MAP_W as f64 - 4.0)) as usize;
+            let y = 2 + (js_sys::Math::random() * (MAP_H as f64 - 4.0)) as usize;
+            WORLD_MAP[x + y * MAP_W] = 3;
+        }
+        // room borders with crate texture
+        for _ in 0..8 {
+            let rw = 4 + (js_sys::Math::random() * 6.0) as usize;
+            let rh = 4 + (js_sys::Math::random() * 6.0) as usize;
+            let rx = 2 + (js_sys::Math::random() * (MAP_W as f64 - rw as f64 - 4.0)) as usize;
+            let ry = 2 + (js_sys::Math::random() * (MAP_H as f64 - rh as f64 - 4.0)) as usize;
+            for x in rx..rx + rw {
+                WORLD_MAP[x + ry * MAP_W] = 4;
+                WORLD_MAP[x + (ry + rh - 1) * MAP_W] = 4;
+            }
+            for y in ry..ry + rh {
+                WORLD_MAP[rx + y * MAP_W] = 4;
+                WORLD_MAP[(rx + rw - 1) + y * MAP_W] = 4;
+            }
+        }
+        // clear spawn
+        for y in 14..18 {
+            for x in 14..18 {
+                WORLD_MAP[x + y * MAP_W] = 0;
+            }
+        }
+    }
+}
+
 #[inline(always)]
 fn tile(x: f64, y: f64) -> i32 {
     if x >= 0.0 && y >= 0.0 {
@@ -133,6 +299,25 @@ thread_local! {
     static RESIZE_CB: ResizeClosure = const { std::cell::RefCell::new(None) };
     static STOPPING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static AUDIO_CTX: std::cell::RefCell<Option<AudioContext>> = const { std::cell::RefCell::new(None) };
+}
+
+fn encode_sdp(s: &str) -> String {
+    console::log_1(&JsValue::from_str(&format!("[encode_sdp] Input length: {}, has CRLF: {}", s.len(), s.contains("\r\n"))));
+    // Filter out a=max-message-size before encoding - preserve exact line structure
+    let lines: Vec<&str> = s.split("\r\n").collect();
+    console::log_1(&JsValue::from_str(&format!("[encode_sdp] Split into {} lines", lines.len())));
+    let filtered: Vec<&str> = lines.into_iter().filter(|line| !line.starts_with("a=max-message-size:")).collect();
+    console::log_1(&JsValue::from_str(&format!("[encode_sdp] After filter: {} lines", filtered.len())));
+    let joined = filtered.join("\r\n");
+    console::log_1(&JsValue::from_str(&format!("[encode_sdp] Joined length: {}, first 50: {:?}", joined.len(), &joined.chars().take(50).collect::<String>())));
+    window().unwrap().btoa(&joined).unwrap_or_default()
+}
+
+fn decode_sdp(s: &str) -> String {
+    console::log_1(&JsValue::from_str(&format!("[decode_sdp] Input base64 length: {}", s.len())));
+    let raw = window().unwrap().atob(s).unwrap_or_default();
+    console::log_1(&JsValue::from_str(&format!("[decode_sdp] Decoded length: {}, starts with v=: {}, first 50 chars: {:?}", raw.len(), raw.starts_with("v="), &raw.chars().take(50).collect::<String>())));
+    raw
 }
 
 #[derive(Clone)]
@@ -194,11 +379,18 @@ struct DoomGame {
 
     // Day/night cycle (0.0 = midnight, 0.5 = noon, 1.0 = midnight)
     time_of_day: f64,
+
+    // Ammo pickups
+    ammo_pickups: Vec<Vec2>,
+    last_ammo_spawn_time: f64,
+    remote_players: Vec<RemotePlayer>,
+    procedural: bool,
 }
 
 impl DoomGame {
     fn new(difficulty: Difficulty) -> Self {
         init_world_map();
+        init_textures();
 
         let (max_health, _damage_mult) = match difficulty {
             Difficulty::Easy => (150, 0.5),
@@ -247,7 +439,16 @@ impl DoomGame {
             last_spawn_time: 0.0,
             game_time: 0.0,
             time_of_day: 0.25, // Start at dawn
+            ammo_pickups: Vec::new(),
+            last_ammo_spawn_time: 0.0,
+            remote_players: Vec::new(),
+            procedural: false,
         }
+    }
+
+    fn enable_procedural(&mut self) {
+        self.procedural = true;
+        unsafe { generate_procedural_world(); }
     }
 
     fn update(&mut self, dt: f64) -> bool {
@@ -273,36 +474,29 @@ impl DoomGame {
 
         KEYS.with(|k| {
             let keys = k.borrow();
-            // Forward/backward
+            let forward = self.dir;
+            let left = Vec2::new(-self.dir.y, self.dir.x); // left normal
+            let right = Vec2::new(self.dir.y, -self.dir.x); // right normal
+            let strafe_force = move_force * 0.7;
+
             if keys[38] || keys[87] {
-                // W/Up
-                force = force.add(&self.dir.scale(move_force));
+                force = force.add(&forward.scale(move_force));
             }
             if keys[40] || keys[83] {
-                // S/Down
-                force = force.sub(&self.dir.scale(move_force));
+                force = force.sub(&forward.scale(move_force));
             }
-            // Strafe
             if keys[65] || keys[81] {
-                // A/Q
-                let strafe = self.dir.perpendicular();
-                force = force.sub(&strafe.scale(move_force));
+                force = force.add(&left.scale(strafe_force));
             }
             if keys[68] || keys[69] {
-                // D/E
-                let strafe = self.dir.perpendicular();
-                force = force.add(&strafe.scale(move_force));
+                force = force.add(&right.scale(strafe_force));
             }
-            // Rotation
             if keys[37] {
-                // Left arrow
                 self.rotate(0.05);
             }
             if keys[39] {
-                // Right arrow
                 self.rotate(-0.05);
             }
-            // Weapon switch
             if keys[49] {
                 self.current_weapon = 0;
             }
@@ -311,7 +505,42 @@ impl DoomGame {
             }
         });
 
+        // Normalize combined movement to prevent faster diagonal speed
+        if force.length() > move_force {
+            force = force.normalize().scale(move_force);
+        }
+
         self.player_body.apply_force(force);
+
+        // Spawn ammo pickups periodically if low
+        if (self.game_time - self.last_ammo_spawn_time) > 6000.0 && self.ammo < 100 && self.ammo_pickups.len() < 6 {
+            // Find a free tile
+            for _ in 0..20 {
+                let x = 2.0 + js_sys::Math::random() * (MAP_W as f64 - 4.0);
+                let y = 2.0 + js_sys::Math::random() * (MAP_H as f64 - 4.0);
+                if tile(x, y) == 0 {
+                    self.ammo_pickups.push(Vec2::new(x, y));
+                    self.last_ammo_spawn_time = self.game_time;
+                    break;
+                }
+            }
+        }
+
+        // Pickup collection
+        self.ammo_pickups.retain(|p| {
+            let dist = self.player_body.position.distance_to(p);
+            if dist < 0.6 {
+                self.ammo = (self.ammo + 15).min(150);
+                false
+            } else {
+                true
+            }
+        });
+
+        // Passive ammo trickle if completely dry (avoid soft-lock)
+        if self.ammo == 0 && (self.game_time as i32 % 1000) < 16 { // roughly every second
+            self.ammo += 1;
+        }
 
         // Mouse look
         MOUSE_DELTA_X.with(|md| {
@@ -560,7 +789,8 @@ impl DoomGame {
     }
 
     fn shoot(&mut self, now: f64) {
-        let cost = if self.current_weapon == 0 { 1 } else { 2 };
+        // Pistol (weapon 0) now infinite ammo (cost 0) so player never hard locks.
+        let cost = if self.current_weapon == 0 { 0 } else { 2 };
         self.ammo -= cost;
         self.last_shot_time = now;
 
@@ -721,31 +951,81 @@ impl DoomGame {
 
             // Wall color based on type
             let wall_type = tile(result.map_x as f64, result.map_y as f64);
-            let (base_r, base_g, base_b) = match wall_type {
-                2 => (180, 160, 70), // Stone wall
-                3 => (120, 100, 80), // Pillar
-                4 => (160, 120, 60), // Crate
-                _ => (200, 180, 80), // Default
+            let tex_index = match wall_type {
+                2 => 1, // stone
+                3 => 4, // pillar marble
+                4 => 3, // crate
+                _ => 0, // brick default
             };
-
-            // Texture coordinate
-            let stripe_pattern = ((result.wall_x * 8.0) as i32 % 2 == 0) as u8;
-            let texture_mult = 0.85 + stripe_pattern as f32 * 0.15;
-
-            // Side shading
-            let side_mult = if result.side == 1 { 0.7 } else { 1.0 };
-
-            // Distance fog
-            let fog = (1.0 / (1.0 + result.distance * 0.15)).min(1.0) as f32;
-
-            // Time of day lighting
+            let tex_x = ((result.wall_x * TEX_W as f64) as i32 & (TEX_W as i32 - 1)) as usize;
+            let side_mult = if result.side == 1 { 0.65 } else { 1.0 };
+            let fog = (1.0 / (1.0 + result.distance * 0.18)).min(1.0) as f32;
             let day_light = self.get_ambient_light();
+            unsafe {
+                for sy in draw_start..draw_end {
+                    let d_y = sy - draw_start;
+                    let tex_y = ((d_y as f64 / (draw_end - draw_start) as f64) * TEX_H as f64) as usize & (TEX_H - 1);
+                    let base = (tex_y * TEX_W + tex_x) * 3;
+                    let mut r = TEXTURES[tex_index][base] as f32;
+                    let mut g = TEXTURES[tex_index][base + 1] as f32;
+                    let mut b = TEXTURES[tex_index][base + 2] as f32;
+                    // Lighting & fog
+                    r = r * side_mult * fog * day_light;
+                    g = g * side_mult * fog * day_light;
+                    b = b * side_mult * fog * day_light;
+                    gfx.set_pixel_rgb(x, sy, r as u8, g as u8, b as u8);
+                }
+            }
+        }
 
-            let r = (base_r as f32 * texture_mult * side_mult * fog * day_light) as u8;
-            let g = (base_g as f32 * texture_mult * side_mult * fog * day_light) as u8;
-            let b = (base_b as f32 * texture_mult * side_mult * fog * day_light) as u8;
+        // Render ammo pickups (simple blue squares)
+        for ap in &self.ammo_pickups {
+            let sprite_pos = ap.sub(&self.player_body.position);
+            let inv_det = 1.0 / (self.plane.x * self.dir.y - self.dir.x * self.plane.y);
+            let transform_x = inv_det * (self.dir.y * sprite_pos.x - self.dir.x * sprite_pos.y);
+            let transform_y = inv_det * (-self.plane.y * sprite_pos.x + self.plane.x * sprite_pos.y);
+            if transform_y > 0.1 && transform_y < 20.0 {
+                let screen_x = ((w as f64 / 2.0) * (1.0 + transform_x / transform_y)) as i32;
+                let size = ((10.0 / transform_y).abs() as i32).clamp(2, 12);
+                if screen_x >= 0 && screen_x < w as i32 {
+                    for dy in -size..=size {
+                        for dx in -size..=size {
+                            if dx.abs() + dy.abs() < size { // diamond shape
+                                let px = screen_x + dx;
+                                let py = half_h as i32 + dy;
+                                if px >= 0 && px < w as i32 && py >= 0 && py < h as i32 {
+                                    gfx.set_pixel_rgb(px as u32, py as u32, 30, 144, 255);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-            gfx.draw_vline(x, draw_start, draw_end - 1, r, g, b);
+        // Render remote players (green diamond)
+        for rp in &self.remote_players {
+            let sprite_pos = rp.body.position.sub(&self.player_body.position);
+            let inv_det = 1.0 / (self.plane.x * self.dir.y - self.dir.x * self.plane.y);
+            let transform_x = inv_det * (self.dir.y * sprite_pos.x - self.dir.x * sprite_pos.y);
+            let transform_y = inv_det * (-self.plane.y * sprite_pos.x + self.plane.x * sprite_pos.y);
+            if transform_y > 0.1 && transform_y < 25.0 {
+                let screen_x = ((w as f64 / 2.0) * (1.0 + transform_x / transform_y)) as i32;
+                let size = ((14.0 / transform_y).abs() as i32).clamp(2, 16);
+                if screen_x >= 0 && screen_x < w as i32 {
+                    for dy in -size..=size {
+                        for dx in -size..=size {
+                            if dx.abs() + dy.abs() < size {
+                                let px = screen_x + dx;
+                                let py = half_h as i32 + dy;
+                                if px >= 0 && px < w as i32 && py >= 0 && py < h as i32 {
+                                    gfx.set_pixel_rgb(px as u32, py as u32, 0, 220, 80);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Render particles
@@ -855,17 +1135,9 @@ impl DoomGame {
                 continue;
             }
 
-            let color = if monster.sprite_type == 0 {
-                (200, 50, 50)
-            } else {
-                (150, 100, 200)
-            };
-
+            // Textured monster billboard
+            let tex_index = if monster.sprite_type == 0 { 0 } else { 1 };
             let day_light = self.get_ambient_light();
-            let r = (color.0 as f32 * day_light) as u8;
-            let g = (color.1 as f32 * day_light) as u8;
-            let b = (color.2 as f32 * day_light) as u8;
-
             for stripe in draw_start_x..=draw_end_x {
                 if stripe >= w {
                     break;
@@ -878,10 +1150,20 @@ impl DoomGame {
                             / sprite_width as f64;
                         let tex_y = (y as i32 - (half_h as i32 - sprite_height / 2)) as f64
                             / sprite_height as f64;
-
-                        // Simple body shape
-                        if tex_x > 0.25 && tex_x < 0.75 && tex_y > 0.15 && tex_y < 0.85 {
-                            gfx.set_pixel_rgb(stripe, y, r, g, b);
+                        if (0.0..=1.0).contains(&tex_x) && (0.0..=1.0).contains(&tex_y) {
+                            let sx = (tex_x * (MONSTER_TEX_W as f64)) as usize & (MONSTER_TEX_W - 1);
+                            let sy = (tex_y * (MONSTER_TEX_H as f64)) as usize & (MONSTER_TEX_H - 1);
+                            let base = (sy * MONSTER_TEX_W + sx) * 3;
+                            unsafe {
+                                let mut r = MONSTER_TEXTURES[tex_index][base] as f32;
+                                let mut g = MONSTER_TEXTURES[tex_index][base + 1] as f32;
+                                let mut b = MONSTER_TEXTURES[tex_index][base + 2] as f32;
+                                // Apply day light
+                                r *= day_light;
+                                g *= day_light;
+                                b *= day_light;
+                                gfx.set_pixel_rgb(stripe, y, r as u8, g as u8, b as u8);
+                            }
                         }
                     }
                 }
@@ -986,33 +1268,40 @@ impl DoomGame {
             gfx.fill_rect(bar_x, bar_y, filled, bar_height, r, g, 0);
         }
 
-        // Ammo counter
-        let ammo_x = w - 120;
-        let ammo_y = h - 45;
-        self.draw_number(gfx, self.ammo, ammo_x, ammo_y);
+        // Ammo / weapon indicator
+        let ammo_x = w - 140;
+        let ammo_y = h - 55;
+        if self.current_weapon == 0 { // infinite pistol
+            self.draw_text(gfx, "AMMO", ammo_x, ammo_y, (200,200,200));
+            self.draw_text(gfx, "INF", ammo_x, ammo_y + 16, (255,255,0));
+        } else {
+            self.draw_text(gfx, "AMMO", ammo_x, ammo_y, (200,200,200));
+            self.draw_number(gfx, self.ammo, ammo_x, ammo_y + 16);
+            if self.ammo < 10 { // low ammo flash border
+                gfx.draw_rect(ammo_x - 4, ammo_y + 12, 70, 22, 255, 0, 0);
+            }
+        }
 
         // Score
         let score_x = w / 2 - 60;
         let score_y = 20;
         self.draw_number(gfx, self.score as i32, score_x, score_y);
 
-        // Difficulty indicator
+        // Difficulty indicator text
         let diff_x = 20;
         let diff_y = 20;
-        let diff_color = match self.difficulty {
-            Difficulty::Easy => (0, 255, 0),
-            Difficulty::Normal => (255, 255, 0),
-            Difficulty::Hard => (255, 0, 0),
+        let (diff_str, diff_color) = match self.difficulty {
+            Difficulty::Easy => ("EASY", (0,255,0)),
+            Difficulty::Normal => ("NORMAL", (255,255,0)),
+            Difficulty::Hard => ("HARD", (255,0,0)),
         };
-        gfx.fill_rect(
-            diff_x,
-            diff_y,
-            60,
-            10,
-            diff_color.0,
-            diff_color.1,
-            diff_color.2,
-        );
+        self.draw_text(gfx, diff_str, diff_x, diff_y, diff_color);
+
+        // Remote player count (multiplayer indicator)
+        if !self.remote_players.is_empty() {
+            let mp_str = format!("MP:{}", self.remote_players.len());
+            self.draw_text(gfx, &mp_str, diff_x, diff_y + 18, (0,180,255));
+        }
 
         // Crosshair
         let cx = w / 2;
@@ -1022,38 +1311,417 @@ impl DoomGame {
     }
 
     fn draw_number(&self, gfx: &mut Renderer, num: i32, x: u32, y: u32) {
+        // 5x7 pixel font for digits 0-9 scaled by scale factor
+        const SCALE: u32 = 2; // Each font pixel becomes SCALE x SCALE block
+        const FONT_W: u32 = 5;
+        const FONT_H: u32 = 7;
+        static DIGITS: [&str; 10] = [
+            // Each string is 5*7=35 chars of '1' (on) or '0' (off), row-major
+            // 0
+            "11111\
+             10001\
+             10011\
+             10101\
+             11001\
+             10001\
+             11111",
+            // 1
+            "00100\
+             01100\
+             00100\
+             00100\
+             00100\
+             00100\
+             01110",
+            // 2
+            "11111\
+             00001\
+             00001\
+             11111\
+             10000\
+             10000\
+             11111",
+            // 3
+            "11111\
+             00001\
+             00001\
+             11111\
+             00001\
+             00001\
+             11111",
+            // 4
+            "10001\
+             10001\
+             10001\
+             11111\
+             00001\
+             00001\
+             00001",
+            // 5
+            "11111\
+             10000\
+             10000\
+             11111\
+             00001\
+             00001\
+             11111",
+            // 6
+            "11111\
+             10000\
+             10000\
+             11111\
+             10001\
+             10001\
+             11111",
+            // 7
+            "11111\
+             00001\
+             00001\
+             00010\
+             00010\
+             00100\
+             00100",
+            // 8
+            "11111\
+             10001\
+             10001\
+             11111\
+             10001\
+             10001\
+             11111",
+            // 9
+            "11111\
+             10001\
+             10001\
+             11111\
+             00001\
+             00001\
+             11111",
+        ];
+
         let digits = num.to_string();
         let mut offset = 0;
         for ch in digits.chars() {
-            if let Some(digit) = ch.to_digit(10) {
-                // Simple 7-segment style digit
-                for dx in 0..10 {
-                    for dy in 0..15 {
-                        let draw = match digit {
-                            0 => !(2..=7).contains(&dx) || !(2..=12).contains(&dy),
-                            1 => dx > 7,
-                            2 => {
-                                (dy < 2)
-                                    || (dy > 6 && dy < 9)
-                                    || (dy > 12)
-                                    || (dx < 2 && dy > 6)
-                                    || (dx > 7 && dy < 7)
-                            }
-                            _ => dx % 3 == 0 || dy % 5 == 0,
-                        };
-                        if draw {
-                            let px = x + offset + dx;
-                            let py = y + dy;
-                            if px < gfx.width() && py < gfx.height() {
-                                gfx.set_pixel_rgb(px, py, 255, 255, 0);
+            if let Some(d) = ch.to_digit(10) {
+                let pattern = DIGITS[d as usize].replace('\n', "");
+                for fy in 0..FONT_H {
+                    for fx in 0..FONT_W {
+                        let idx = (fy * FONT_W + fx) as usize;
+                        if pattern.as_bytes()[idx] == b'1' {
+                            // draw scaled block
+                            for sx in 0..SCALE {
+                                for sy in 0..SCALE {
+                                    let px = x + offset + fx * SCALE + sx;
+                                    let py = y + fy * SCALE + sy;
+                                    if px < gfx.width() && py < gfx.height() {
+                                        gfx.set_pixel_rgb(px, py, 255, 255, 0);
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            offset += 12;
+            offset += (FONT_W + 1) * SCALE; // 1 pixel spacing
         }
     }
+
+    fn draw_text(&self, gfx: &mut Renderer, text: &str, x: u32, y: u32, color: (u8,u8,u8)) {
+        // 5x7 uppercase font (subset) scaled by 2
+        const SCALE: u32 = 2;
+        const W: u32 = 5;
+        const H: u32 = 7;
+        fn pattern(ch: char) -> &'static str {
+            match ch {
+                'A' => "01110\n10001\n10001\n11111\n10001\n10001\n10001",
+                'D' => "11110\n10001\n10001\n10001\n10001\n10001\n11110",
+                'E' => "11111\n10000\n10000\n11111\n10000\n10000\n11111",
+                'F' => "11111\n10000\n10000\n11111\n10000\n10000\n10000",
+                'H' => "10001\n10001\n10001\n11111\n10001\n10001\n10001",
+                'I' => "11111\n00100\n00100\n00100\n00100\n00100\n11111",
+                'L' => "10000\n10000\n10000\n10000\n10000\n10000\n11111",
+                'M' => "10001\n11011\n10101\n10101\n10001\n10001\n10001",
+                'N' => "10001\n11001\n10101\n10011\n10001\n10001\n10001",
+                'O' => "01110\n10001\n10001\n10001\n10001\n10001\n01110",
+                'P' => "11110\n10001\n10001\n11110\n10000\n10000\n10000",
+                'R' => "11110\n10001\n10001\n11110\n10100\n10010\n10001",
+                'S' => "01111\n10000\n10000\n01110\n00001\n00001\n11110",
+                'Y' => "10001\n10001\n01010\n00100\n00100\n00100\n00100",
+                '0' => "01110\n10001\n10011\n10101\n11001\n10001\n01110",
+                '1' => "00100\n01100\n00100\n00100\n00100\n00100\n01110",
+                '2' => "11111\n00001\n00001\n11111\n10000\n10000\n11111",
+                '3' => "11111\n00001\n00001\n11111\n00001\n00001\n11111",
+                ':' => "00000\n00100\n00100\n00000\n00100\n00100\n00000",
+                _ => "00000\n00000\n00000\n00000\n00000\n00000\n00000",
+            }
+        }
+        let mut offset = 0;
+        for ch in text.chars() {
+            let pat = pattern(ch).replace('\n', "");
+            for fy in 0..H {
+                for fx in 0..W {
+                    let idx = (fy * W + fx) as usize;
+                    if pat.as_bytes()[idx] == b'1' {
+                        for sx in 0..SCALE {
+                            for sy in 0..SCALE {
+                                let px = x + offset + fx * SCALE + sx;
+                                let py = y + fy * SCALE + sy;
+                                if px < gfx.width() && py < gfx.height() {
+                                    gfx.set_pixel_rgb(px, py, color.0, color.1, color.2);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            offset += (W + 1) * SCALE;
+        }
+    }
+}
+
+#[derive(Clone)]
+struct RemotePlayer {
+    id: String,
+    body: Body,
+}
+
+// Multiplayer WASM bindings
+#[wasm_bindgen]
+pub fn doom_add_remote_player(id: &str, x: f64, y: f64) {
+    GAME.with(|gm| {
+        if let Some(ref mut game) = *gm.borrow_mut() {
+            if game.remote_players.iter().any(|p| p.id == id) { return; }
+            let mut body = Body::new(x, y, 0.3);
+            body.friction = 0.3;
+            game.remote_players.push(RemotePlayer { id: id.to_string(), body });
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn doom_update_remote_player(id: &str, x: f64, y: f64) {
+    GAME.with(|gm| {
+        if let Some(ref mut game) = *gm.borrow_mut() {
+            if let Some(p) = game.remote_players.iter_mut().find(|p| p.id == id) {
+                p.body.position.x = x;
+                p.body.position.y = y;
+            }
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn doom_remove_remote_player(id: &str) {
+    GAME.with(|gm| {
+        if let Some(ref mut game) = *gm.borrow_mut() {
+            game.remote_players.retain(|p| p.id != id);
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn doom_enable_procedural() {
+    GAME.with(|gm| {
+        if let Some(ref mut game) = *gm.borrow_mut() {
+            game.enable_procedural();
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn doom_restore_original_map() {
+    restore_original_map();
+}
+
+#[wasm_bindgen]
+pub fn doom_get_player_position() -> js_sys::Array {
+    let arr = js_sys::Array::new();
+    GAME.with(|gm| {
+        if let Some(ref game) = *gm.borrow() {
+            arr.push(&JsValue::from_f64(game.player_body.position.x));
+            arr.push(&JsValue::from_f64(game.player_body.position.y));
+        }
+    });
+    arr
+}
+
+thread_local! {
+    static MP_ID: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+    static MP_PC: std::cell::RefCell<Option<RtcPeerConnection>> = std::cell::RefCell::new(None);
+    static MP_CHAN: std::cell::RefCell<Option<RtcDataChannel>> = std::cell::RefCell::new(None);
+    static MP_INTERVAL: std::cell::RefCell<Option<i32>> = std::cell::RefCell::new(None);
+    static MP_HOSTING: std::cell::RefCell<bool> = std::cell::RefCell::new(false);
+}
+
+fn local_player_id() -> String {
+    MP_ID.with(|id| {
+        if id.borrow().is_empty() {
+            let rand = js_sys::Math::random();
+            let s = format!("{:08x}", (rand * 0xffff_ffffu32 as f64) as u32);
+            *id.borrow_mut() = s;
+        }
+        id.borrow().clone()
+    })
+}
+
+fn broadcast_position() {
+    let pid = local_player_id();
+    let (x,y) = GAME.with(|gm| {
+        if let Some(ref g) = *gm.borrow() { (g.player_body.position.x, g.player_body.position.y) } else { (0.0,0.0) }
+    });
+    let msg = serde_json::json!({"t":"pos","id":pid,"x":x,"y":y}).to_string();
+    MP_CHAN.with(|ch| {
+        if let Some(ref dc) = *ch.borrow() { let _ = dc.send_with_str(&msg); }
+    });
+}
+
+fn handle_incoming(data: &str) {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+        let t = val.get("t").and_then(|v| v.as_str()).unwrap_or("");
+        let id = val.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if id == local_player_id() { return; } // ignore own
+        match t {
+            "join" => {
+                let x = val.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let y = val.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                GAME.with(|gm| {
+                    if let Some(ref mut g) = *gm.borrow_mut() {
+                        if !g.remote_players.iter().any(|p| p.id == id) {
+                            let mut body = Body::new(x,y,0.3); body.friction = 0.3;
+                            g.remote_players.push(RemotePlayer { id: id.to_string(), body });
+                        }
+                    }
+                });
+            }
+            "leave" => {
+                GAME.with(|gm| {
+                    if let Some(ref mut g) = *gm.borrow_mut() {
+                        g.remote_players.retain(|p| p.id != id);
+                    }
+                });
+            }
+            "pos" => {
+                let x = val.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let y = val.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                GAME.with(|gm| {
+                    if let Some(ref mut g) = *gm.borrow_mut() {
+                        if let Some(p) = g.remote_players.iter_mut().find(|p| p.id == id) {
+                            p.body.position.x = x;
+                            p.body.position.y = y;
+                        }
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+fn setup_interval() {
+    MP_INTERVAL.with(|iv| {
+        if iv.borrow().is_some() { return; }
+        let cb = Closure::<dyn FnMut()>::wrap(Box::new(|| broadcast_position()));
+        let handle = window().unwrap().set_interval_with_callback_and_timeout_and_arguments_0(cb.as_ref().unchecked_ref(), 200).unwrap();
+        cb.forget();
+        *iv.borrow_mut() = Some(handle);
+    });
+}
+
+#[wasm_bindgen]
+pub fn mp_id() -> String { local_player_id() }
+
+#[wasm_bindgen]
+pub async fn mp_host() -> Result<String, JsValue> {
+    MP_HOSTING.with(|h| *h.borrow_mut() = true);
+    let pc = RtcPeerConnection::new()?;
+    let channel = pc.create_data_channel("doom");
+    MP_CHAN.with(|c| *c.borrow_mut() = Some(channel.clone()));
+    let onmsg = Closure::<dyn FnMut(MessageEvent)>::wrap(Box::new(|e: MessageEvent| {
+        if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() { handle_incoming(&String::from(txt)); }
+    }));
+    channel.set_onmessage(Some(onmsg.as_ref().unchecked_ref()));
+    onmsg.forget();
+    MP_PC.with(|p| *p.borrow_mut() = Some(pc.clone()));
+    let offer = wasm_bindgen_futures::JsFuture::from(pc.create_offer()).await?;
+    let offer_sdp_initial = Reflect::get(&offer, &JsValue::from_str("sdp"))?.as_string().unwrap_or_default();
+    let mut desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
+    desc.set_sdp(&offer_sdp_initial);
+    wasm_bindgen_futures::JsFuture::from(pc.set_local_description(&desc)).await?;
+    // Return initial SDP (without waiting for full ICE gathering to avoid unsupported APIs)
+    let code = format!("{}:{}", encode_sdp(&offer_sdp_initial), local_player_id());
+    Ok(code)
+}
+
+#[wasm_bindgen]
+pub async fn mp_join(code: &str) -> Result<String, JsValue> {
+    let mut parts = code.splitn(2, ':');
+    let offer_enc = parts.next().unwrap_or("");
+    let host_id = parts.next().unwrap_or("");
+    let offer_sdp = decode_sdp(offer_enc);
+    console::log_1(&JsValue::from_str(&format!("[MP_JOIN] Decoded SDP:\n{}", offer_sdp)));
+    let pc = RtcPeerConnection::new()?;
+    MP_PC.with(|p| *p.borrow_mut() = Some(pc.clone()));
+    let ondc = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(|e: web_sys::Event| {
+        if let Some(dc) = e.target().and_then(|t| t.dyn_into::<RtcDataChannel>().ok()) {
+            MP_CHAN.with(|c| *c.borrow_mut() = Some(dc.clone()));
+            let onmsg = Closure::<dyn FnMut(MessageEvent)>::wrap(Box::new(|ev: MessageEvent| {
+                if let Ok(txt) = ev.data().dyn_into::<js_sys::JsString>() { handle_incoming(&String::from(txt)); }
+            }));
+            dc.set_onmessage(Some(onmsg.as_ref().unchecked_ref()));
+            onmsg.forget();
+            // Send join message when open
+            let onopen = Closure::<dyn FnMut()>::wrap(Box::new(|| {
+                let pid = local_player_id();
+                let msg = serde_json::json!({"t":"join","id":pid}).to_string();
+                MP_CHAN.with(|c| if let Some(ref ch)=*c.borrow() { let _ = ch.send_with_str(&msg); });
+            }));
+            dc.set_onopen(Some(onopen.as_ref().unchecked_ref()));
+            onopen.forget();
+        }
+    }));
+    pc.set_ondatachannel(Some(ondc.as_ref().unchecked_ref()));
+    ondc.forget();
+    let mut offer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
+    offer_desc.set_sdp(&offer_sdp);
+    wasm_bindgen_futures::JsFuture::from(pc.set_remote_description(&offer_desc)).await?;
+    let answer = wasm_bindgen_futures::JsFuture::from(pc.create_answer()).await?;
+    let answer_sdp_initial = Reflect::get(&answer, &JsValue::from_str("sdp"))?.as_string().unwrap_or_default();
+    let answer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
+    answer_desc.set_sdp(&answer_sdp_initial);
+    wasm_bindgen_futures::JsFuture::from(pc.set_local_description(&answer_desc)).await?;
+    // Return initial SDP (without waiting for full ICE gathering)
+    let answer_code = format!("{}:{}", encode_sdp(&answer_sdp_initial), host_id);
+    Ok(answer_code)
+}
+
+#[wasm_bindgen]
+pub async fn mp_finalize(answer_code: &str) -> Result<(), JsValue> {
+    let mut parts = answer_code.splitn(2, ':');
+    let answer_enc = parts.next().unwrap_or("");
+    let _host_id = parts.next().unwrap_or("");
+    let answer_sdp = decode_sdp(answer_enc);
+    console::log_1(&JsValue::from_str(&format!("[MP_FINALIZE] Decoded SDP:\n{}", answer_sdp)));
+    let mut answer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
+    answer_desc.set_sdp(&answer_sdp);
+    let pc_opt = MP_PC.with(|p| p.borrow().clone());
+    if let Some(pc) = pc_opt {
+        wasm_bindgen_futures::JsFuture::from(pc.set_remote_description(&answer_desc)).await?;
+        // After channel open send join
+        MP_CHAN.with(|c| if let Some(ref ch)=*c.borrow() {
+            let pid = local_player_id();
+            let msg = serde_json::json!({"t":"join","id":pid}).to_string();
+            let _ = ch.send_with_str(&msg);
+        });
+        setup_interval();
+    }
+    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn mp_disconnect() {
+    MP_INTERVAL.with(|iv| { if let Some(id)=*iv.borrow() { let _ = window().unwrap().clear_interval_with_handle(id); } *iv.borrow_mut()=None; });
+    MP_CHAN.with(|c| *c.borrow_mut() = None);
+    MP_PC.with(|p| if let Some(pc)=p.borrow().clone() { let _ = pc.close(); });
 }
 
 impl Monster {

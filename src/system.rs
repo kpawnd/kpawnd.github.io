@@ -150,12 +150,58 @@ impl System {
         match cmd {
             "reboot" => "\x1b[REBOOT]".into(),
             "echo" => { let out=args.join(" "); if out=="github" { format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap()) } else { out } }
-            "help" => "Available commands:\n\n  File operations:    cat cd chmod chown cp cut diff du file find head ln ls mkdir mv pwd rm rmdir sort tail tee touch tr uniq wc nano vi\n  Text processing:    awk grep sed\n  System info:        df free hostname id man neofetch ps top uname uptime whereis which whoami\n  Network:            arp curl dig host ifconfig ip myip nc netstat nslookup\n                      ping route ss traceroute wget\n  Archives:           tar gzip gunzip zip unzip\n  Package mgmt:       apt apt-get\n  Other:              alias clear doom echo env exit export help history kill\n                      python screensaver service sudo\n\nType 'man <command>' for more info on a specific command.".into(),
+            "help" => "Available commands:\n\n  File operations:    cat cd chmod chown cp cut diff du file find head ln ls mkdir mv pwd rm rmdir sort tail tee touch tr uniq wc nano vi\n  Text processing:    awk grep sed\n  System info:        df free hostname id man neofetch ps top uname uptime whereis which whoami\n  Network:            arp curl dig host ifconfig ip myip nc netstat nslookup\n                      ping route ss traceroute wget\n  Archives:           tar gzip gunzip zip unzip\n  Package mgmt:       apt apt-get\n  Games:              doom doommap mp\n  Other:              alias clear echo env exit export help history kill\n                      python screensaver service sudo\n\nType 'man <command>' for more info on a specific command.".into(),
             "man" => self.cmd_man(args),
             "neofetch" => "\x1b[NEOFETCH_DATA]".to_string(),
             "nano" | "vi" | "vim" => self.cmd_nano(args),
             "python" => { if args.is_empty() { self.start_python_repl() } else { "python: script execution not supported".to_string() } }
-            "doom" => "\x1b[LAUNCH_DOOM]".to_string(),
+            "doom" => {
+                // Parse optional difficulty argument: easy|normal|hard or 0|1|2
+                if !args.is_empty() {
+                    let raw = args[0].to_lowercase();
+                    let diff = match raw.as_str() {
+                        "easy" | "0" => Some(0u8),
+                        "normal" | "1" => Some(1u8),
+                        "hard" | "2" => Some(2u8),
+                        _ => None,
+                    };
+                    if let Some(d) = diff {
+                        return format!("\x1b[LAUNCH_DOOM:{}]", d);
+                    } else {
+                        return "usage: doom [easy|normal|hard]".to_string();
+                    }
+                }
+                "\x1b[LAUNCH_DOOM]".to_string()
+            },
+            "doommap" => {
+                if args.is_empty() {
+                    return "usage: doommap <proc|restore>".into();
+                }
+                match args[0] {
+                    "proc" => "\x1b[DOOM_ENABLE_PROC]".into(),
+                    "restore" => "\x1b[DOOM_RESTORE]".into(),
+                    _ => "usage: doommap <proc|restore>".into(),
+                }
+            },
+            "grace" => {
+                // Launch the desktop environment named Grace
+                "\x1b[LAUNCH_GRACE]".into()
+            },
+            "mp" => {
+                if args.is_empty() { return "usage: mp <host|join|finalize|id|disconnect>".into(); }
+                match args[0] {
+                    "host" => "\x1b[MP_HOST]".into(),
+                    "join" => {
+                        if args.len()<2 { "usage: mp join <ROOM_CODE>".into() } else { format!("\x1b[MP_JOIN:{}]", args[1]) }
+                    }
+                    "finalize" => {
+                        if args.len()<2 { "usage: mp finalize <ANSWER_CODE>".into() } else { format!("\x1b[MP_FINALIZE:{}]", args[1]) }
+                    }
+                    "id" => "\x1b[MP_ID]".into(),
+                    "disconnect" => "\x1b[MP_DISCONNECT]".into(),
+                    _ => "usage: mp <host|join|finalize|id|disconnect>".into(),
+                }
+            },
             "screensaver" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
             "wget" => self.cmd_wget(args),
             "curl" => self.cmd_curl(args),
@@ -211,6 +257,7 @@ impl System {
                     .unwrap_or_else(|| "user".into());
                 format!("uid=1000({}) gid=1000({})", user, user)
             }
+            
             "whoami" => self
                 .shell
                 .env
@@ -1682,21 +1729,45 @@ DESCRIPTION
                 .into()
             }
 
-            "doom" => {
-                r#"DOOM(1)                          User Commands                         DOOM(1)
+                 "doom" => {
+                  r#"DOOM(1)                          User Commands                         DOOM(1)
 
-NAME
-       doom - play a game
+        NAME
+            doom - play a game
 
-SYNOPSIS
-       doom
+        SYNOPSIS
+            doom [easy|normal|hard]
 
-DESCRIPTION
-       Launch a simple game in the terminal.
-       Press ESC to exit.
-"#
-                .into()
-            }
+        DESCRIPTION
+            Launch a simple game rendered onto a canvas.
+            Optional difficulty adjusts monster count, damage, player HP.
+            Press ESC to exit.
+
+        DIFFICULTY
+            easy    Fewer monsters, lower damage, higher player health
+            normal  Balanced baseline (default)
+            hard    More monsters, higher damage, lower player health
+        "#
+                  .into()
+                 }
+
+                 "doommap" => {
+                  r#"DOOMMAP(1)                       User Commands                      DOOMMAP(1)
+
+        NAME
+            doommap - control procedural map generation for doom
+
+        SYNOPSIS
+            doommap proc
+            doommap restore
+
+        DESCRIPTION
+            Enables or restores the original static map layout used by the Doom game.
+            'proc' will generate a new procedural layout (rooms/corridors) without
+            permanently destroying the original; 'restore' returns to the original map.
+
+        "#.into()
+                 }
 
             "man" => {
                 r#"MAN(1)                           User Commands                          MAN(1)
