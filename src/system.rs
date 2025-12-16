@@ -1945,11 +1945,7 @@ DESCRIPTION
         }
 
         // Get the host (last non-flag argument)
-        let host = args
-            .iter()
-            .filter(|a| !a.starts_with('-'))
-            .next_back()
-            .unwrap_or(&"");
+        let host = args.iter().rfind(|a| !a.starts_with('-')).unwrap_or(&"");
 
         if host.is_empty() {
             return "ping: missing host operand".to_string();
