@@ -1945,11 +1945,7 @@ DESCRIPTION
         }
 
         // Get the host (last non-flag argument)
-        let host = args
-            .iter()
-            .filter(|a| !a.starts_with('-'))
-            .next_back()
-            .unwrap_or(&"");
+        let host = args.iter().rfind(|a| !a.starts_with('-')).unwrap_or(&"");
 
         if host.is_empty() {
             return "ping: missing host operand".to_string();
@@ -2373,10 +2369,26 @@ DESCRIPTION
                 entries.sort_by(|a, b| a.0.cmp(b.0));
                 for (name, child) in entries {
                     let obj = js_sys::Object::new();
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("name"), &JsValue::from_str(name));
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("is_dir"), &JsValue::from_bool(child.is_dir));
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("size"), &JsValue::from_f64(child.size as f64));
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("is_executable"), &JsValue::from_bool(child.is_executable));
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("name"),
+                        &JsValue::from_str(name),
+                    );
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("is_dir"),
+                        &JsValue::from_bool(child.is_dir),
+                    );
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("size"),
+                        &JsValue::from_f64(child.size as f64),
+                    );
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("is_executable"),
+                        &JsValue::from_bool(child.is_executable),
+                    );
                     arr.push(&obj);
                 }
             }
