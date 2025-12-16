@@ -2373,10 +2373,26 @@ DESCRIPTION
                 entries.sort_by(|a, b| a.0.cmp(b.0));
                 for (name, child) in entries {
                     let obj = js_sys::Object::new();
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("name"), &JsValue::from_str(name));
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("is_dir"), &JsValue::from_bool(child.is_dir));
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("size"), &JsValue::from_f64(child.size as f64));
-                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("is_executable"), &JsValue::from_bool(child.is_executable));
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("name"),
+                        &JsValue::from_str(name),
+                    );
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("is_dir"),
+                        &JsValue::from_bool(child.is_dir),
+                    );
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("size"),
+                        &JsValue::from_f64(child.size as f64),
+                    );
+                    let _ = js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from_str("is_executable"),
+                        &JsValue::from_bool(child.is_executable),
+                    );
                     arr.push(&obj);
                 }
             }

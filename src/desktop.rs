@@ -1,11 +1,11 @@
 //! Grace Desktop Environment - System 6/7 Style
-//! 
+//!
 //! A lightweight desktop environment inspired by classic Macintosh System 6/7.
 //! Renders to HTML/CSS via wasm-bindgen.
 
+use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 use web_sys::{Document, Element, HtmlElement, HtmlInputElement};
-use std::cell::RefCell;
 
 /// Window state for the desktop
 #[derive(Clone)]
@@ -172,7 +172,7 @@ impl Desktop {
         // Use r##" "## to allow # inside the string
         let hd_icon = r##"<svg viewBox="0 0 32 32" fill="none" stroke="#000" stroke-width="1.5"><rect x="4" y="6" width="24" height="20" rx="1"></rect><path d="M4 10h24"></path><rect x="8" y="3" width="10" height="7" rx="1"></rect></svg>"##;
         let trash_icon = r##"<svg viewBox="0 0 32 32" fill="none" stroke="#000" stroke-width="1.5"><path d="M8 10h16v18H8z"></path><path d="M6 10h20"></path><path d="M12 6h8v4h-8z"></path><path d="M12 14v10M16 14v10M20 14v10"></path></svg>"##;
-        
+
         let html = [
             r#"<div class="s7-desktop">"#,
             r#"<div class="s7-menubar">"#,
@@ -227,7 +227,12 @@ impl Desktop {
         };
 
         let win_data = DESKTOP_STATE.with(|state| {
-            state.borrow().windows.iter().find(|w| w.id == window_id).cloned()
+            state
+                .borrow()
+                .windows
+                .iter()
+                .find(|w| w.id == window_id)
+                .cloned()
         });
 
         let win = match win_data {
@@ -246,10 +251,13 @@ impl Desktop {
         let win_el = doc.create_element("div").unwrap();
         win_el.set_class_name("s7-window");
         win_el.set_id(&format!("s7-win-{}", window_id));
-        let _ = win_el.set_attribute("style", &format!(
-            "left:{}px;top:{}px;width:{}px;height:{}px;z-index:{}",
-            win.x, win.y, win.width, win.height, z
-        ));
+        let _ = win_el.set_attribute(
+            "style",
+            &format!(
+                "left:{}px;top:{}px;width:{}px;height:{}px;z-index:{}",
+                win.x, win.y, win.width, win.height, z
+            ),
+        );
 
         // Window content based on type
         let content = match win.window_type {
@@ -273,7 +281,7 @@ impl Desktop {
 
         // Setup window interactions
         Self::setup_window_drag(window_id);
-        
+
         // Setup terminal if it's a terminal window
         if win.window_type == WindowType::Terminal {
             Self::setup_terminal(window_id);
@@ -283,7 +291,8 @@ impl Desktop {
     }
 
     fn render_terminal_content(window_id: u32) -> String {
-        format!(r#"
+        format!(
+            r#"
             <div class="s7-terminal" id="s7-term-{}">
                 <div class="s7-term-output" id="s7-term-out-{}"></div>
                 <div class="s7-term-input-line">
@@ -291,11 +300,14 @@ impl Desktop {
                     <input type="text" class="s7-term-input" id="s7-term-input-{}" autocomplete="off" spellcheck="false">
                 </div>
             </div>
-        "#, window_id, window_id, window_id, window_id)
+        "#,
+            window_id, window_id, window_id, window_id
+        )
     }
 
     fn render_filemanager_content(window_id: u32) -> String {
-        format!(r#"
+        format!(
+            r#"
             <div class="s7-filemanager" id="s7-fm-{}">
                 <div class="s7-fm-toolbar">
                     <button class="s7-btn" onclick="window.GraceDesktop.fmUp({})">↑ Up</button>
@@ -308,11 +320,14 @@ impl Desktop {
                 <div class="s7-fm-list" id="s7-fm-list-{}"></div>
                 <div class="s7-fm-status" id="s7-fm-status-{}">0 items</div>
             </div>
-        "#, window_id, window_id, window_id, window_id, window_id, window_id, window_id)
+        "#,
+            window_id, window_id, window_id, window_id, window_id, window_id, window_id
+        )
     }
 
     fn render_notepad_content(window_id: u32) -> String {
-        format!(r#"
+        format!(
+            r#"
             <div class="s7-notepad" id="s7-notepad-{}">
                 <div class="s7-notepad-toolbar">
                     <button class="s7-btn" onclick="window.GraceDesktop.notepadOpen({})">Open</button>
@@ -322,7 +337,9 @@ impl Desktop {
                 </div>
                 <textarea class="s7-notepad-text" id="s7-notepad-text-{}" spellcheck="false"></textarea>
             </div>
-        "#, window_id, window_id, window_id, window_id, window_id, window_id)
+        "#,
+            window_id, window_id, window_id, window_id, window_id, window_id
+        )
     }
 
     fn render_about_content() -> String {
@@ -347,7 +364,11 @@ impl Desktop {
 
         // Setup drag via inline event handlers in the HTML (already done)
         // Just make the window focusable
-        if let Some(win_el) = doc.query_selector(&format!("#s7-win-{}", window_id)).ok().flatten() {
+        if let Some(win_el) = doc
+            .query_selector(&format!("#s7-win-{}", window_id))
+            .ok()
+            .flatten()
+        {
             let _ = win_el.set_attribute("tabindex", "0");
         }
     }
@@ -358,63 +379,83 @@ impl Desktop {
             None => return,
         };
 
-        let input_el = match doc.query_selector(&format!("#s7-term-input-{}", window_id)).ok().flatten() {
+        let input_el = match doc
+            .query_selector(&format!("#s7-term-input-{}", window_id))
+            .ok()
+            .flatten()
+        {
             Some(i) => i,
             None => return,
         };
 
         // Set initial prompt
-        if let Some(prompt_el) = doc.query_selector(&format!("#s7-term-prompt-{}", window_id)).ok().flatten() {
+        if let Some(prompt_el) = doc
+            .query_selector(&format!("#s7-term-prompt-{}", window_id))
+            .ok()
+            .flatten()
+        {
             // We'll set the prompt from JS since we need system access
         }
 
         let wid = window_id;
-        let keydown = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
-            let key = e.key();
-            if key == "Enter" {
-                e.prevent_default();
-                // Call into JS to handle command execution
-                if let Some(win) = web_sys::window() {
-                    let _ = js_sys::Reflect::get(&win, &JsValue::from_str("GraceDesktop"))
-                        .ok()
-                        .and_then(|gd| {
-                            js_sys::Reflect::get(&gd, &JsValue::from_str("handleTerminalCommand"))
+        let keydown =
+            Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
+                let key = e.key();
+                if key == "Enter" {
+                    e.prevent_default();
+                    // Call into JS to handle command execution
+                    if let Some(win) = web_sys::window() {
+                        let _ = js_sys::Reflect::get(&win, &JsValue::from_str("GraceDesktop"))
+                            .ok()
+                            .and_then(|gd| {
+                                js_sys::Reflect::get(
+                                    &gd,
+                                    &JsValue::from_str("handleTerminalCommand"),
+                                )
                                 .ok()
-                                .and_then(|f| f.dyn_ref::<js_sys::Function>().map(|func| {
-                                    func.call1(&gd, &JsValue::from_f64(wid as f64)).ok()
-                                }))
-                        });
+                                .and_then(|f| {
+                                    f.dyn_ref::<js_sys::Function>().map(|func| {
+                                        func.call1(&gd, &JsValue::from_f64(wid as f64)).ok()
+                                    })
+                                })
+                            });
+                    }
+                } else if key == "ArrowUp" {
+                    e.prevent_default();
+                    if let Some(win) = web_sys::window() {
+                        let _ = js_sys::Reflect::get(&win, &JsValue::from_str("GraceDesktop"))
+                            .ok()
+                            .and_then(|gd| {
+                                js_sys::Reflect::get(&gd, &JsValue::from_str("terminalHistoryUp"))
+                                    .ok()
+                                    .and_then(|f| {
+                                        f.dyn_ref::<js_sys::Function>().map(|func| {
+                                            func.call1(&gd, &JsValue::from_f64(wid as f64)).ok()
+                                        })
+                                    })
+                            });
+                    }
+                } else if key == "ArrowDown" {
+                    e.prevent_default();
+                    if let Some(win) = web_sys::window() {
+                        let _ = js_sys::Reflect::get(&win, &JsValue::from_str("GraceDesktop"))
+                            .ok()
+                            .and_then(|gd| {
+                                js_sys::Reflect::get(&gd, &JsValue::from_str("terminalHistoryDown"))
+                                    .ok()
+                                    .and_then(|f| {
+                                        f.dyn_ref::<js_sys::Function>().map(|func| {
+                                            func.call1(&gd, &JsValue::from_f64(wid as f64)).ok()
+                                        })
+                                    })
+                            });
+                    }
                 }
-            } else if key == "ArrowUp" {
-                e.prevent_default();
-                if let Some(win) = web_sys::window() {
-                    let _ = js_sys::Reflect::get(&win, &JsValue::from_str("GraceDesktop"))
-                        .ok()
-                        .and_then(|gd| {
-                            js_sys::Reflect::get(&gd, &JsValue::from_str("terminalHistoryUp"))
-                                .ok()
-                                .and_then(|f| f.dyn_ref::<js_sys::Function>().map(|func| {
-                                    func.call1(&gd, &JsValue::from_f64(wid as f64)).ok()
-                                }))
-                        });
-                }
-            } else if key == "ArrowDown" {
-                e.prevent_default();
-                if let Some(win) = web_sys::window() {
-                    let _ = js_sys::Reflect::get(&win, &JsValue::from_str("GraceDesktop"))
-                        .ok()
-                        .and_then(|gd| {
-                            js_sys::Reflect::get(&gd, &JsValue::from_str("terminalHistoryDown"))
-                                .ok()
-                                .and_then(|f| f.dyn_ref::<js_sys::Function>().map(|func| {
-                                    func.call1(&gd, &JsValue::from_f64(wid as f64)).ok()
-                                }))
-                        });
-                }
-            }
-        });
+            });
 
-        input_el.add_event_listener_with_callback("keydown", keydown.as_ref().unchecked_ref()).unwrap();
+        input_el
+            .add_event_listener_with_callback("keydown", keydown.as_ref().unchecked_ref())
+            .unwrap();
         keydown.forget();
 
         // Focus the input
@@ -431,9 +472,11 @@ impl Desktop {
                 .and_then(|gd| {
                     js_sys::Reflect::get(&gd, &JsValue::from_str("refreshFileManager"))
                         .ok()
-                        .and_then(|f| f.dyn_ref::<js_sys::Function>().map(|func| {
-                            func.call1(&gd, &JsValue::from_f64(window_id as f64)).ok()
-                        }))
+                        .and_then(|f| {
+                            f.dyn_ref::<js_sys::Function>().map(|func| {
+                                func.call1(&gd, &JsValue::from_f64(window_id as f64)).ok()
+                            })
+                        })
                 });
         }
     }
@@ -446,7 +489,13 @@ impl Desktop {
                     let h = date.get_hours();
                     let m = date.get_minutes();
                     let ampm = if h >= 12 { "PM" } else { "AM" };
-                    let h12 = if h == 0 { 12 } else if h > 12 { h - 12 } else { h };
+                    let h12 = if h == 0 {
+                        12
+                    } else if h > 12 {
+                        h - 12
+                    } else {
+                        h
+                    };
                     clock.set_inner_html(&format!("{}:{:02} {}", h12, m, ampm));
                 }
             }
@@ -474,7 +523,11 @@ impl Desktop {
         });
 
         if let Some(doc) = Self::get_document() {
-            if let Some(win) = doc.query_selector(&format!("#s7-win-{}", window_id)).ok().flatten() {
+            if let Some(win) = doc
+                .query_selector(&format!("#s7-win-{}", window_id))
+                .ok()
+                .flatten()
+            {
                 win.remove();
             }
         }
@@ -488,7 +541,8 @@ impl Desktop {
                 let style = dropdown.dyn_ref::<HtmlElement>().map(|el| el.style());
                 if let Some(style) = style {
                     let current = style.get_property_value("display").unwrap_or_default();
-                    let _ = style.set_property("display", if current == "none" { "block" } else { "none" });
+                    let _ = style
+                        .set_property("display", if current == "none" { "block" } else { "none" });
                 }
             }
         }
