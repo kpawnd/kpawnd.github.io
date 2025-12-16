@@ -389,7 +389,7 @@ impl Desktop {
         };
 
         // Set initial prompt
-        if let Some(prompt_el) = doc
+        if let Some(_prompt_el) = doc
             .query_selector(&format!("#s7-term-prompt-{}", window_id))
             .ok()
             .flatten()
