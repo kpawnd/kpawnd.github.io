@@ -1,3 +1,6 @@
+import { getState } from './state.js';
+import { handleCommand as terminalHandleCommand } from './terminal.js';
+
 (function(){
   const d = document;
   let container, desktop, panel, startMenu, windowArea;
@@ -5,19 +8,18 @@
   let activeWindow = null;
   let startMenuOpen = false;
 
-  // SVG Icons
+  // minimal geometry icons
   const icons = {
-    start: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" fill="#4a90d9"/><path d="M7 7h4v4H7zM13 7h4v4h-4zM7 13h4v4H7zM13 13h4v4h-4z" fill="#fff"/></svg>`,
-    terminal: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="3" width="20" height="18" rx="2" fill="#1a1a2e"/><path d="M5 7l4 4-4 4M10 15h6" stroke="#4ade80" stroke-width="2" fill="none"/></svg>`,
-    files: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 012-2h4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V6z" fill="#f59e0b"/><path d="M3 10h18v8a2 2 0 01-2 2H5a2 2 0 01-2-2v-8z" fill="#fbbf24"/></svg>`,
-    browser: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" fill="#3b82f6"/><ellipse cx="12" cy="12" rx="10" ry="4" fill="none" stroke="#93c5fd" stroke-width="1.5"/><ellipse cx="12" cy="12" rx="4" ry="10" fill="none" stroke="#93c5fd" stroke-width="1.5"/><line x1="2" y1="12" x2="22" y2="12" stroke="#93c5fd" stroke-width="1.5"/></svg>`,
-    settings: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" fill="#6b7280"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" fill="#9ca3af"/></svg>`,
-    notepad: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" fill="#e5e7eb"/><path d="M14 2v6h6" fill="#9ca3af"/><path d="M7 13h10M7 17h7" stroke="#6b7280" stroke-width="1.5"/></svg>`,
-    info: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" fill="#3b82f6"/><path d="M12 16v-4M12 8h.01" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>`,
-    power: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" fill="#ef4444"/><path d="M12 6v6M8 8a6 6 0 108 0" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/></svg>`,
-    close: `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>`,
-    minimize: `<svg viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>`,
-    maximize: `<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1" stroke="currentColor" stroke-width="2" fill="none"/></svg>`,
+    start: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" fill="#2563eb"/></svg>`,
+    terminal: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="14" fill="#0f172a"/><path d="M6 9l4 3-4 3" stroke="#22c55e" stroke-width="2"/><path d="M11 15h6" stroke="#22c55e" stroke-width="2"/></svg>`,
+    files: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="5" width="18" height="14" fill="#f59e0b"/><rect x="3" y="9" width="18" height="10" fill="#fbbf24"/></svg>`,
+    settings: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" fill="#9ca3af"/></svg>`,
+    notepad: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" fill="#e5e7eb"/><path d="M7 8h10M7 11h8M7 14h6M7 17h4" stroke="#6b7280" stroke-width="1.5"/></svg>`,
+    info: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" fill="#3b82f6"/><path d="M12 16v-5M12 8h1" stroke="#fff" stroke-width="2"/></svg>`,
+    power: `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" fill="#ef4444"/></svg>`,
+    close: `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6" stroke="currentColor" stroke-width="2.5"/></svg>`,
+    minimize: `<svg viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5"/></svg>`,
+    maximize: `<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none"/></svg>`,
   };
 
   function el(tag, cls, parent, html) {
@@ -90,26 +92,275 @@
   }
 
   function openFileManager() {
-    const content = `
-      <div class="grace-filemanager">
-        <div class="grace-fm-sidebar">
-          <div class="grace-fm-item active">🏠 Home</div>
-          <div class="grace-fm-item">📁 Documents</div>
-          <div class="grace-fm-item">🖼️ Pictures</div>
-          <div class="grace-fm-item">🎵 Music</div>
-          <div class="grace-fm-item">💾 Downloads</div>
+    const { win, body } = createWindow('Files', '<div class="grace-filemanager"></div>', 760, 460);
+    const fmRoot = body.querySelector('.grace-filemanager');
+    fmRoot.innerHTML = `
+      <div class="grace-fm-sidebar">
+        <div class="grace-fm-item" data-path="HOME">🏠 Home</div>
+        <div class="grace-fm-item" data-path="/home/user/Documents">📁 Documents</div>
+        <div class="grace-fm-item" data-path="/home/user/Pictures">🖼️ Pictures</div>
+        <div class="grace-fm-item" data-path="/home/user/Music">🎵 Music</div>
+        <div class="grace-fm-item" data-path="/home/user/Downloads">💾 Downloads</div>
+      </div>
+      <div class="grace-fm-content">
+        <div class="grace-fm-toolbar">
+          <button class="grace-fm-btn" data-act="up" title="Up one level">⬆️</button>
+          <button class="grace-fm-btn" data-act="refresh" title="Refresh">🔄</button>
+          <button class="grace-fm-btn" data-act="newfile" title="New File">📄+</button>
+          <button class="grace-fm-btn" data-act="newfolder" title="New Folder">📁+</button>
+          <button class="grace-fm-btn" data-act="delete" title="Delete Selected">🗑️</button>
+          <div class="grace-fm-path" title="Current Path"></div>
         </div>
-        <div class="grace-fm-main">
-          <div class="grace-fm-file"><span>📄</span> readme.txt</div>
-          <div class="grace-fm-file"><span>📁</span> projects</div>
-          <div class="grace-fm-file"><span>🖼️</span> wallpaper.png</div>
-          <div class="grace-fm-file"><span>📄</span> notes.md</div>
-        </div>
+        <div class="grace-fm-main"></div>
+        <div class="grace-fm-status"></div>
       </div>`;
-    createWindow('Files', content, 600, 400);
+
+    const sidebar = fmRoot.querySelector('.grace-fm-sidebar');
+    const main = fmRoot.querySelector('.grace-fm-main');
+    const toolbar = fmRoot.querySelector('.grace-fm-toolbar');
+    const pathEl = fmRoot.querySelector('.grace-fm-path');
+    const statusEl = fmRoot.querySelector('.grace-fm-status');
+
+    const system = getState().system;
+    let currentPath = system.exec('pwd') || '/';
+    let selected = null;
+
+    function ensureUserDirs() {
+      ['Documents','Pictures','Music','Downloads'].forEach(dir => {
+        system.exec(`mkdir /home/user/${dir}`); // silently ignored if exists
+      });
+    }
+
+    function listDir(path) {
+      const entries = system.fs_list(path);
+      currentPath = path;
+      pathEl.textContent = path;
+      selected = null;
+      main.innerHTML = '';
+      let count = 0;
+      if (Array.isArray(entries)) {
+        entries.forEach((entry) => {
+          const name = entry.name || '';
+          const isDir = !!entry.is_dir;
+          if (!name) return;
+          const item = document.createElement('div');
+          item.className = 'grace-fm-entry';
+          item.dataset.name = name;
+          item.dataset.isDir = isDir ? '1' : '0';
+          item.innerHTML = `<div class="grace-fm-entry-icon">${isDir ? '📁' : '📄'}</div><div class="grace-fm-entry-label">${name}</div>`;
+          item.onclick = () => {
+            if (selected) selected.classList.remove('selected');
+            selected = item;
+            item.classList.add('selected');
+          };
+          item.ondblclick = () => {
+            if (isDir) {
+              const next = path === '/' ? `/${name}` : `${path}/${name}`;
+              listDir(next);
+            } else {
+              openFileViewer(path === '/' ? `/${name}` : `${path}/${name}`);
+            }
+          };
+          main.appendChild(item);
+          count++;
+        });
+      }
+      statusEl.textContent = `${count} items`;
+    }
+
+    function parentPath(p) {
+      if (p === '/' || p === '') return '/';
+      const parts = p.split('/').filter(Boolean);
+      parts.pop();
+      return '/' + parts.join('/');
+    }
+
+    function openFileViewer(fullPath) {
+      const content = system.fs_read(fullPath);
+      const viewer = createWindow(fullPath, '<pre class="grace-file-viewer"></pre>', 600, 400);
+      viewer.body.querySelector('pre').textContent = content;
+    }
+
+    toolbar.addEventListener('click', (e) => {
+      const btn = e.target.closest('.grace-fm-btn');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (act === 'up') {
+        listDir(parentPath(currentPath));
+      } else if (act === 'refresh') {
+        listDir(currentPath);
+      } else if (act === 'newfile') {
+        const name = prompt('New file name');
+        if (name) {
+          const target = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+          system.fs_write(target, '');
+          listDir(currentPath);
+        }
+      } else if (act === 'newfolder') {
+        const name = prompt('New folder name');
+        if (name) {
+          const target = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+          system.fs_mkdir(target);
+          listDir(currentPath);
+        }
+      } else if (act === 'delete') {
+        if (!selected) return;
+        const name = selected.dataset.name;
+        const isDir = selected.dataset.isDir === '1';
+        const target = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+        if (confirm(`Delete ${target}?`)) {
+          system.fs_rm(target, isDir);
+          listDir(currentPath);
+        }
+      }
+    });
+
+    sidebar.addEventListener('click', (e) => {
+      const item = e.target.closest('.grace-fm-item');
+      if (!item) return;
+      sidebar.querySelectorAll('.grace-fm-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      let p = item.dataset.path;
+      if (p === 'HOME') {
+        p = system.exec('pwd') || '/home/user';
+      }
+      listDir(p);
+    });
+
+    ensureUserDirs();
+    listDir(currentPath);
   }
 
   function openTerminal() {
+    // Open terminal window inside Grace instead of exiting
+    openGraceTerminal();
+  }
+
+  function openGraceTerminal() {
+    const { win, body } = createWindow('Terminal', '<div class="grace-terminal"></div>', 720, 480);
+    const system = getState().system;
+    const root = body.querySelector('.grace-terminal');
+    root.innerHTML = `
+      <div class="grace-term-output"></div>
+      <div class="grace-term-input-row">
+        <span class="grace-term-prompt"></span>
+        <input class="grace-term-input" type="text" spellcheck="false" autocomplete="off" />
+      </div>
+    `;
+    const outputEl = root.querySelector('.grace-term-output');
+    const promptEl = root.querySelector('.grace-term-prompt');
+    const inputEl = root.querySelector('.grace-term-input');
+    const history = [];
+    let histIdx = 0;
+
+    function refreshPrompt() {
+      promptEl.textContent = system.prompt();
+    }
+
+    function termPrint(text, cls = '') {
+      const line = document.createElement('div');
+      line.className = 'grace-term-line ' + cls;
+      // Handle ANSI color codes for display
+      let html = text;
+      html = html.replace(/\x1b\[COLOR:([^\]]+)\]/g, '<span style="color:$1">');
+      html = html.replace(/\x1b\[0m\]/g, '</span>');
+      line.innerHTML = html;
+      outputEl.appendChild(line);
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    function termPrintHTML(html) {
+      const div = document.createElement('div');
+      div.className = 'grace-term-line';
+      div.innerHTML = html;
+      outputEl.appendChild(div);
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    async function handleCmd(cmd) {
+      if (cmd.trim()) {
+        history.push(cmd);
+        histIdx = history.length;
+      }
+      if (cmd.trim() !== 'clear') {
+        termPrint(promptEl.textContent + cmd, 'grace-term-cmd');
+      }
+      const result = system.exec(cmd);
+      // Handle escape sequences
+      if (result === '\x1b[CLEAR]') {
+        outputEl.innerHTML = '';
+      } else if (result === '\x1b[EXIT]') {
+        termPrint('logout', 'grace-term-info');
+      } else if (result === '\x1b[NEOFETCH_DATA]') {
+        // Display neofetch in terminal window
+        try {
+          const { neofetch_logo } = await import('../pkg/terminal_os.js');
+          const logo = neofetch_logo(getState().system.exec('uname -n') || 'kpawnd');
+          logo.split('\n').forEach(l => termPrintHTML('<span style="white-space:pre;font-family:monospace">' + l + '</span>'));
+        } catch (e) {
+          termPrint('Neofetch failed', 'grace-term-error');
+        }
+      } else if (result === '\x1b[PYTHON_REPL]') {
+        termPrint('Python 3.11.0 (sandboxed, Rust-backed)', 'grace-term-info');
+        termPrint('Type "exit()" to exit', 'grace-term-info');
+      } else if (result.startsWith('\x1b[LAUNCH_DOOM')) {
+        termPrint('Doom: Use fullscreen terminal for games', 'grace-term-info');
+      } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
+        termPrint('Grace desktop is already running', 'grace-term-info');
+      } else if (result.startsWith('\x1b[NANO:')) {
+        const content = result.slice(7, -1);
+        const colonIdx = content.indexOf(':');
+        if (colonIdx === -1) {
+          openNotepad('', '');
+        } else {
+          openNotepad(content.substring(0, colonIdx), content.substring(colonIdx + 1).replace(/\\n/g, '\n'));
+        }
+      } else if (result === '\x1b[REBOOT]') {
+        termPrint('Rebooting...', 'grace-term-info');
+        setTimeout(() => window.dispatchEvent(new CustomEvent('KP_REBOOT')), 500);
+      } else if (result && result.trim() && !result.startsWith('\x1b[')) {
+        // Strip color escapes for plain text display, then show
+        const clean = result.replace(/\x1b\[COLOR:[^\]]*\]/g, '').replace(/\x1b\[0m\]/g, '');
+        clean.split('\n').forEach(l => termPrint(l));
+      }
+      refreshPrompt();
+    }
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const val = inputEl.value;
+        inputEl.value = '';
+        handleCmd(val);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (histIdx > 0) { histIdx--; inputEl.value = history[histIdx] || ''; }
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (histIdx < history.length - 1) { histIdx++; inputEl.value = history[histIdx]; } else { histIdx = history.length; inputEl.value = ''; }
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        // Simple tab completion
+        const partial = inputEl.value;
+        if (partial && system.complete) {
+          const matches = system.complete(partial);
+          if (matches && matches.length === 1) {
+            inputEl.value = matches[0];
+          } else if (matches && matches.length > 1) {
+            termPrint(matches.join('  '));
+          }
+        }
+      }
+    });
+
+    // Focus input when clicking anywhere in terminal
+    root.addEventListener('click', () => inputEl.focus());
+
+    refreshPrompt();
+    inputEl.focus();
+  }
+
+  function exitToTerminal() {
     container.style.display = 'none';
     d.dispatchEvent(new CustomEvent('GRACE:OPEN_TERMINAL'));
   }
@@ -123,6 +374,74 @@
         <p style="color:#64748b;margin-top:20px;font-size:13px;">A lightweight desktop environment<br>inspired by XFCE, Windows 7 & macOS</p>
       </div>`;
     createWindow('About Grace', content, 320, 260);
+  }
+
+  function openNotepad(initialPath = '', initialContent = '') {
+    const { body } = createWindow('Notepad', '<div class="grace-notepad"></div>', 640, 420);
+    const system = getState().system;
+    const root = body.querySelector('.grace-notepad');
+    root.innerHTML = `
+      <div class="grace-notepad-toolbar">
+        <button class="grace-notepad-btn" data-act="open">Open</button>
+        <button class="grace-notepad-btn" data-act="save">Save</button>
+        <button class="grace-notepad-btn" data-act="saveas">Save As</button>
+        <div class="grace-notepad-path"></div>
+      </div>
+      <textarea class="grace-notepad-text" spellcheck="false"></textarea>
+    `;
+    const pathEl = root.querySelector('.grace-notepad-path');
+    const textEl = root.querySelector('.grace-notepad-text');
+    let currentPath = initialPath;
+    if (initialContent) textEl.value = initialContent;
+    pathEl.textContent = currentPath || '';
+
+    function doOpen() {
+      const p = prompt('Open file path', currentPath || getState().system.exec('pwd'));
+      if (!p) return;
+      const content = system.exec(`cat ${p}`);
+      if (/No such file|Is a directory/.test(content)) {
+        alert(`Cannot open: ${content}`);
+        return;
+      }
+      currentPath = p;
+      pathEl.textContent = p;
+      textEl.value = content;
+    }
+
+    function writeFile(p, data) {
+      try {
+        const handle = system.sys_open(p, true);
+        if (handle < 0) throw new Error('open failed');
+        const ok = system.sys_write(handle >>> 0, data);
+        system.sys_close(handle >>> 0);
+        return ok;
+      } catch (e) { return false; }
+    }
+
+    function doSave(asNew = false) {
+      let p = currentPath;
+      if (asNew || !p) {
+        p = prompt('Save as', currentPath || (getState().system.exec('pwd') + '/untitled.txt'));
+        if (!p) return;
+      }
+      system.exec(`touch ${p}`);
+      const ok = writeFile(p, textEl.value);
+      if (!ok) {
+        alert('Save failed');
+      } else {
+        currentPath = p;
+        pathEl.textContent = p;
+      }
+    }
+
+    root.querySelector('.grace-notepad-toolbar').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (act === 'open') doOpen();
+      if (act === 'save') doSave(false);
+      if (act === 'saveas') doSave(true);
+    });
   }
 
   function openSettings() {
@@ -162,7 +481,7 @@
     // Desktop icons
     createDesktopIcon('Terminal', icons.terminal, 30, 30, openTerminal);
     createDesktopIcon('Files', icons.files, 30, 120, openFileManager);
-    createDesktopIcon('Browser', icons.browser, 30, 210, () => createWindow('Browser', '<iframe src="about:blank" style="width:100%;height:100%;border:none;"></iframe>', 800, 500));
+    createDesktopIcon('Notepad', icons.notepad, 30, 210, () => openNotepad());
 
     // Panel (taskbar)
     panel = el('div', 'grace-panel', container);
@@ -198,6 +517,7 @@
     const menuApps = [
       { name: 'Terminal', icon: icons.terminal, action: openTerminal },
       { name: 'Files', icon: icons.files, action: openFileManager },
+      { name: 'Notepad', icon: icons.notepad, action: () => openNotepad() },
       { name: 'Settings', icon: icons.settings, action: openSettings },
       { name: 'About', icon: icons.info, action: openAbout },
     ];
@@ -209,7 +529,7 @@
     const menuDivider = el('div', 'grace-menu-divider', startMenu);
     const powerItem = el('div', 'grace-menu-item grace-menu-power', startMenu);
     powerItem.innerHTML = `<span class="grace-menu-icon">${icons.power}</span><span>Exit to Terminal</span>`;
-    powerItem.onclick = () => { toggleStartMenu(); openTerminal(); };
+    powerItem.onclick = () => { toggleStartMenu(); exitToTerminal(); };
 
     // Close menu when clicking outside
     container.onclick = (e) => {
@@ -219,88 +539,9 @@
     };
   }
 
-  function ensureStyles() {
-    if (d.getElementById('grace-styles')) return;
-    const style = d.createElement('style');
-    style.id = 'grace-styles';
-    style.textContent = `
-    /* Grace Desktop - XFCE/Win7/OSX inspired */
-    .grace-root { position: fixed; inset: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; user-select: none; overflow: hidden; }
-    .grace-wallpaper { position: absolute; inset: 0; background: linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 50%, #1b263b 100%); }
-    .grace-wallpaper::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 30% 20%, rgba(100,150,200,0.15) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(50,100,150,0.1) 0%, transparent 40%); }
-    
-    .grace-desktop { position: absolute; top: 0; left: 0; right: 0; bottom: 48px; }
-    .grace-desktop-icon { position: absolute; width: 74px; text-align: center; cursor: pointer; padding: 8px 4px; border-radius: 6px; transition: background 0.15s; }
-    .grace-desktop-icon:hover { background: rgba(255,255,255,0.1); }
-    .grace-desktop-icon:active { background: rgba(255,255,255,0.2); }
-    .grace-icon-img { width: 48px; height: 48px; margin: 0 auto 6px; }
-    .grace-icon-img svg { width: 100%; height: 100%; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
-    .grace-icon-label { color: #fff; font-size: 11px; text-shadow: 0 1px 3px rgba(0,0,0,0.8); word-wrap: break-word; }
-
-    .grace-window-area { position: absolute; top: 0; left: 0; right: 0; bottom: 48px; pointer-events: none; }
-    .grace-window { position: absolute; background: linear-gradient(180deg, #3a3a4a 0%, #2d2d3a 100%); border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1); overflow: hidden; pointer-events: auto; display: flex; flex-direction: column; }
-    .grace-window.grace-minimized { display: none; }
-    .grace-window.grace-maximized { left: 0 !important; top: 0 !important; width: 100% !important; height: calc(100% - 48px) !important; border-radius: 0; }
-    
-    .grace-window-titlebar { height: 32px; background: linear-gradient(180deg, #4a4a5a 0%, #3a3a4a 100%); display: flex; align-items: center; padding: 0 8px; cursor: move; flex-shrink: 0; }
-    .grace-window-title { flex: 1; color: #e2e8f0; font-weight: 500; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .grace-window-controls { display: flex; gap: 6px; }
-    .grace-window-controls button { width: 14px; height: 14px; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: filter 0.15s; }
-    .grace-window-controls button svg { width: 8px; height: 8px; }
-    .grace-btn-minimize { background: #f59e0b; color: #7c4a03; }
-    .grace-btn-maximize { background: #22c55e; color: #065f2c; }
-    .grace-btn-close { background: #ef4444; color: #7f1d1d; }
-    .grace-window-controls button:hover { filter: brightness(1.2); }
-    
-    .grace-window-body { flex: 1; background: #1e1e2e; color: #e2e8f0; overflow: auto; }
-
-    .grace-panel { position: absolute; bottom: 0; left: 0; right: 0; height: 48px; background: linear-gradient(180deg, rgba(40,40,50,0.95) 0%, rgba(25,25,35,0.98) 100%); backdrop-filter: blur(12px); border-top: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; padding: 0 8px; gap: 8px; z-index: 10000; }
-    
-    .grace-start-btn { width: 40px; height: 40px; border: none; border-radius: 8px; background: linear-gradient(180deg, #4a90d9 0%, #2563eb 100%); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; box-shadow: 0 2px 8px rgba(37,99,235,0.3); }
-    .grace-start-btn:hover { background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%); transform: scale(1.05); }
-    .grace-start-btn svg { width: 28px; height: 28px; }
-
-    .grace-quick-launch { display: flex; gap: 4px; padding: 0 8px; border-right: 1px solid rgba(255,255,255,0.1); }
-    .grace-ql-btn { width: 36px; height: 36px; border: none; border-radius: 6px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
-    .grace-ql-btn:hover { background: rgba(255,255,255,0.1); }
-    .grace-ql-btn svg { width: 24px; height: 24px; }
-
-    .grace-taskbar { flex: 1; }
-
-    .grace-tray { display: flex; align-items: center; gap: 12px; padding: 0 12px; }
-    .grace-clock { color: #e2e8f0; font-size: 12px; font-weight: 500; }
-
-    .grace-start-menu { position: absolute; bottom: 56px; left: 8px; width: 280px; background: linear-gradient(180deg, rgba(45,45,58,0.98) 0%, rgba(30,30,42,0.99) 100%); backdrop-filter: blur(16px); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1); padding: 8px 0; display: none; z-index: 10001; }
-    .grace-menu-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px; color: #e2e8f0; cursor: pointer; transition: background 0.15s; }
-    .grace-menu-item:hover { background: rgba(255,255,255,0.08); }
-    .grace-menu-icon { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
-    .grace-menu-icon svg { width: 20px; height: 20px; }
-    .grace-menu-divider { height: 1px; background: rgba(255,255,255,0.1); margin: 8px 0; }
-    .grace-menu-power:hover { background: rgba(239,68,68,0.2); }
-
-    /* File Manager */
-    .grace-filemanager { display: flex; height: 100%; }
-    .grace-fm-sidebar { width: 160px; background: #16161e; border-right: 1px solid rgba(255,255,255,0.05); padding: 8px 0; }
-    .grace-fm-item { padding: 8px 16px; color: #94a3b8; cursor: pointer; font-size: 12px; }
-    .grace-fm-item:hover { background: rgba(255,255,255,0.05); }
-    .grace-fm-item.active { background: rgba(59,130,246,0.2); color: #60a5fa; }
-    .grace-fm-main { flex: 1; padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, 90px); gap: 8px; align-content: start; }
-    .grace-fm-file { text-align: center; padding: 12px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; color: #94a3b8; }
-    .grace-fm-file:hover { background: rgba(255,255,255,0.05); }
-    .grace-fm-file span { font-size: 32px; display: block; margin-bottom: 6px; }
-
-    /* Settings */
-    .grace-settings { padding: 20px; }
-    .grace-settings-section { margin-bottom: 20px; }
-    .grace-settings-section h3 { margin: 0 0 12px; color: #e2e8f0; font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px; }
-    .grace-settings label { display: block; margin: 8px 0; color: #94a3b8; font-size: 12px; }
-    .grace-settings select { background: #2d2d3a; border: 1px solid rgba(255,255,255,0.1); color: #e2e8f0; padding: 4px 8px; border-radius: 4px; margin-left: 8px; }
-    `;
-    d.head.appendChild(style);
-  }
+  // Styles moved to css/grace.css
 
   function launch() {
-    ensureStyles();
     if (!container) init();
     container.style.display = 'block';
   }

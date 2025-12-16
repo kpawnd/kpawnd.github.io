@@ -1,0 +1,94 @@
+.grace-root { position: fixed; inset: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; user-select: none; overflow: hidden; }
+.grace-wallpaper { position: absolute; inset: 0; background: linear-gradient(135deg, #1e3a5f 0%, #0d1b2a 50%, #1b263b 100%); }
+.grace-wallpaper::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 30% 20%, rgba(100,150,200,0.15) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(50,100,150,0.1) 0%, transparent 40%); }
+
+.grace-desktop { position: absolute; top: 0; left: 0; right: 0; bottom: 48px; }
+.grace-desktop-icon { position: absolute; width: 74px; text-align: center; cursor: pointer; padding: 8px 4px; border-radius: 6px; transition: background 0.15s; }
+.grace-desktop-icon:hover { background: rgba(255,255,255,0.1); }
+.grace-desktop-icon:active { background: rgba(255,255,255,0.2); }
+.grace-icon-img { width: 48px; height: 48px; margin: 0 auto 6px; image-rendering: pixelated; }
+.grace-icon-img svg { width: 100%; height: 100%; }
+.grace-icon-label { color: #fff; font-size: 11px; text-shadow: 0 1px 3px rgba(0,0,0,0.8); word-wrap: break-word; }
+
+.grace-window-area { position: absolute; top: 0; left: 0; right: 0; bottom: 48px; pointer-events: none; }
+.grace-window { position: absolute; background: #2d2d3a; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1); overflow: hidden; pointer-events: auto; display: flex; flex-direction: column; }
+.grace-window.grace-minimized { display: none; }
+.grace-window.grace-maximized { left: 0 !important; top: 0 !important; width: 100% !important; height: calc(100% - 48px) !important; border-radius: 0; }
+
+.grace-window-titlebar { height: 32px; background: #3a3a4a; display: flex; align-items: center; padding: 0 8px; cursor: move; flex-shrink: 0; }
+.grace-window-title { flex: 1; color: #e2e8f0; font-weight: 500; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grace-window-controls { display: flex; gap: 6px; }
+.grace-window-controls button { width: 14px; height: 14px; border: none; border-radius: 2px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: filter 0.15s; }
+.grace-window-controls button svg { width: 8px; height: 8px; }
+.grace-btn-minimize { background: #f59e0b; color: #1a1a1a; }
+.grace-btn-maximize { background: #22c55e; color: #1a1a1a; }
+.grace-btn-close { background: #ef4444; color: #1a1a1a; }
+.grace-window-controls button:hover { filter: brightness(1.2); }
+
+.grace-window-body { flex: 1; background: #1e1e2e; color: #e2e8f0; overflow: auto; }
+
+.grace-panel { position: absolute; bottom: 0; left: 0; right: 0; height: 48px; background: rgba(25,25,35,0.98); border-top: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; padding: 0 8px; gap: 8px; z-index: 10000; }
+
+.grace-start-btn { width: 40px; height: 40px; border: none; border-radius: 4px; background: #2563eb; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; box-shadow: 0 2px 8px rgba(37,99,235,0.3); }
+.grace-start-btn:hover { background: #3b82f6; transform: scale(1.05); }
+.grace-start-btn svg { width: 24px; height: 24px; }
+
+.grace-quick-launch { display: flex; gap: 4px; padding: 0 8px; border-right: 1px solid rgba(255,255,255,0.1); }
+.grace-ql-btn { width: 36px; height: 36px; border: none; border-radius: 3px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
+.grace-ql-btn:hover { background: rgba(255,255,255,0.1); }
+.grace-ql-btn svg { width: 20px; height: 20px; }
+
+.grace-taskbar { flex: 1; }
+
+.grace-tray { display: flex; align-items: center; gap: 12px; padding: 0 12px; }
+.grace-clock { color: #e2e8f0; font-size: 12px; font-weight: 500; }
+
+.grace-start-menu { position: absolute; bottom: 56px; left: 8px; width: 280px; background: rgba(30,30,42,0.99); border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1); padding: 8px 0; display: none; z-index: 10001; }
+.grace-menu-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px; color: #e2e8f0; cursor: pointer; transition: background 0.15s; }
+.grace-menu-item:hover { background: rgba(255,255,255,0.08); }
+.grace-menu-icon { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+.grace-menu-icon svg { width: 20px; height: 20px; }
+.grace-menu-divider { height: 1px; background: rgba(255,255,255,0.1); margin: 8px 0; }
+.grace-menu-power:hover { background: rgba(239,68,68,0.2); }
+
+/* File Manager */
+.grace-filemanager { display: flex; height: 100%; }
+.grace-fm-sidebar { width: 160px; background: #16161e; border-right: 1px solid rgba(255,255,255,0.05); padding: 8px 0; }
+.grace-fm-item { padding: 8px 16px; color: #94a3b8; cursor: pointer; font-size: 12px; }
+.grace-fm-item:hover { background: rgba(255,255,255,0.05); }
+.grace-fm-item.active { background: rgba(59,130,246,0.2); color: #60a5fa; }
+.grace-fm-main { flex: 1; padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, 90px); gap: 8px; align-content: start; }
+.grace-fm-file { text-align: center; padding: 12px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; color: #94a3b8; }
+.grace-fm-file:hover { background: rgba(255,255,255,0.05); }
+.grace-fm-file span { font-size: 32px; display: block; margin-bottom: 6px; }
+
+.grace-fm-content { display:flex; flex-direction:column; flex:1; }
+.grace-fm-toolbar { display:flex; align-items:center; gap:6px; padding:6px 8px; background:#181820; border-bottom:1px solid rgba(255,255,255,0.07); flex-wrap:wrap; }
+.grace-fm-btn { background:#2d2d3a; color:#e2e8f0; border:1px solid rgba(255,255,255,0.12); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px; }
+.grace-fm-btn:hover { background:#3a3a4a; }
+.grace-fm-path { flex:1; font-size:12px; color:#94a3b8; padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.grace-fm-main { flex:1; padding:12px; display:grid; grid-template-columns:repeat(auto-fill,110px); gap:10px; align-content:start; }
+.grace-fm-entry { background:transparent; border:1px solid transparent; border-radius:6px; padding:8px 6px; text-align:center; cursor:pointer; font-size:11px; color:#94a3b8; display:flex; flex-direction:column; justify-content:center; }
+.grace-fm-entry:hover { background:rgba(255,255,255,0.05); }
+.grace-fm-entry.selected { background:rgba(59,130,246,0.25); border-color:rgba(59,130,246,0.5); color:#60a5fa; }
+.grace-fm-entry-icon { font-size:30px; line-height:32px; }
+.grace-fm-entry-label { margin-top:4px; word-wrap:break-word; }
+.grace-fm-status { padding:4px 8px; font-size:11px; color:#64748b; background:#181820; border-top:1px solid rgba(255,255,255,0.07); }
+.grace-file-viewer { margin:0; padding:12px; font-family:monospace; font-size:12px; white-space:pre-wrap; }
+
+/* Notepad */
+.grace-notepad { display:flex; flex-direction:column; height:100%; }
+.grace-notepad-toolbar { display:flex; gap:6px; padding:6px 8px; background:#181820; border-bottom:1px solid rgba(255,255,255,0.07); }
+.grace-notepad-btn { background:#2d2d3a; color:#e2e8f0; border:1px solid rgba(255,255,255,0.12); border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px; }
+.grace-notepad-btn:hover { background:#3a3a4a; }
+.grace-notepad-path { flex:1; font-size:12px; color:#94a3b8; padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.grace-notepad-text { flex:1; width:100%; background:#0f0f18; color:#e2e8f0; border:none; outline:none; font-family:monospace; font-size:13px; padding:10px; box-sizing:border-box; }
+
+/* Terminal */
+.grace-terminal { display:flex; flex-direction:column; height:100%; background:#0f0f18; font-family:monospace; font-size:13px; color:#e2e8f0; }
+.grace-term-output { flex:1; overflow-y:auto; padding:8px; white-space:pre-wrap; word-break:break-word; }
+.grace-term-line { margin:0; }
+.grace-term-cmd { color:#94a3b8; }
+.grace-term-input-row { display:flex; align-items:center; padding:4px 8px; background:#181820; border-top:1px solid rgba(255,255,255,0.07); }
+.grace-term-prompt { color:#22c55e; margin-right:6px; white-space:nowrap; }
+.grace-term-input { flex:1; background:transparent; border:none; outline:none; color:#e2e8f0; font-family:inherit; font-size:inherit; }

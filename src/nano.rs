@@ -487,7 +487,7 @@ mod tests {
     fn test_insert_char() {
         let mut editor = NanoEditor::new("test.txt", "hello");
         editor.cursor_col = 5;
-        editor.insert_char('!');
+        editor.insert_char("!");
         assert_eq!(editor.get_line(0), "hello!");
     }
 

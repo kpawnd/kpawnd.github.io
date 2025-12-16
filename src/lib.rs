@@ -1,3 +1,4 @@
+pub mod desktop;
 pub mod doom;
 pub mod graphics;
 #[cfg(feature = "webgl")]
@@ -18,6 +19,7 @@ pub mod shell;
 pub mod system;
 pub mod vfs;
 
+pub use desktop::Desktop;
 pub use doom::{memory_usage, start_doom, stop_doom};
 pub use graphics::{Graphics, MatrixScreensaver, SnakeGame};
 #[cfg(feature = "webgl")]

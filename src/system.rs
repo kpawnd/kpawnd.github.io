@@ -325,7 +325,7 @@ impl System {
     pub fn exec_sudo(&mut self, cmd: &str, pw: &str) -> String {
         match &self.user_password {
             Some(saved) if saved == pw => {
-                // Set sudo session to expire in 5 minutes (300000 ms)
+                // Set sudo session to expire in 5 minutes
                 let now = js_sys::Date::now();
                 self.sudo_authenticated_until = Some(now + 300000.0);
                 self.exec_sudo_internal(cmd)
@@ -343,8 +343,8 @@ impl System {
     pub fn has_grub(&self) -> bool {
         // Ensure filesystem initialized before checking
         if self.kernel.fs.resolve("/boot").is_none() {
-            // SAFETY: has_grub is a quick probe; we need mutable access to init
-            // Workaround by temporarily casting (WASM single-threaded)
+            // has_grub is a quick probe
+            // Workaround by temporarily casting
             let this = self as *const System as *mut System;
             unsafe {
                 (*this).kernel.fs.init();
@@ -2361,6 +2361,55 @@ DESCRIPTION
     #[wasm_bindgen]
     pub fn sys_close(&mut self, handle: u32) {
         self.kernel.fs.close(handle);
+    }
+
+    // Lightweight FS API for GUI explorer
+    #[wasm_bindgen]
+    pub fn fs_list(&self, path: &str) -> js_sys::Array {
+        let arr = js_sys::Array::new();
+        match self.kernel.fs.resolve(path) {
+            Some(node) if node.is_dir => {
+                let mut entries: Vec<_> = node.children.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                for (name, child) in entries {
+                    let obj = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("name"), &JsValue::from_str(name));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("is_dir"), &JsValue::from_bool(child.is_dir));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("size"), &JsValue::from_f64(child.size as f64));
+                    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("is_executable"), &JsValue::from_bool(child.is_executable));
+                    arr.push(&obj);
+                }
+            }
+            _ => {}
+        }
+        arr
+    }
+
+    #[wasm_bindgen]
+    pub fn fs_read(&self, path: &str) -> String {
+        match self.kernel.fs.resolve(path) {
+            Some(node) if !node.is_dir => node.data.clone(),
+            _ => String::new(),
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn fs_write(&mut self, path: &str, data: &str) -> bool {
+        self.kernel.fs.create_file(path, data).is_ok()
+    }
+
+    #[wasm_bindgen]
+    pub fn fs_mkdir(&mut self, path: &str) -> bool {
+        self.kernel.fs.create_dir(path).is_ok()
+    }
+
+    #[wasm_bindgen]
+    pub fn fs_rm(&mut self, path: &str, recursive: bool) -> bool {
+        if recursive {
+            self.kernel.fs.remove_recursive(path).is_ok()
+        } else {
+            self.kernel.fs.remove(path).is_ok()
+        }
     }
     #[wasm_bindgen]
     pub fn complete(&self, partial: &str) -> Vec<JsValue> {

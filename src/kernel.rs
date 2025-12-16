@@ -1,8 +1,8 @@
 use crate::{memory::Memory, process::ProcessTable, process::Scheduler, vfs::Vfs};
 
-pub const VERSION: &str = "0.2.0";
+pub const VERSION: &str = "0.6.7";
 pub const TOTAL_MEM: u32 = 131072; // 128KB
-pub const KERNEL_VERSION: &str = "6.1.0-kpawnd";
+pub const KERNEL_VERSION: &str = "6.7.0-kpawnd";
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum KernelState {
@@ -56,7 +56,6 @@ impl Kernel {
             return;
         }
 
-        // ============ BIOS/UEFI Phase ============
         self.state = KernelState::Bios;
         self.ticks = 0;
 
@@ -69,7 +68,6 @@ impl Kernel {
 
         self.ticks = 100;
 
-        // ============ Early Boot Phase ============
         self.state = KernelState::Boot;
 
         self.raw_log("");
@@ -98,7 +96,6 @@ impl Kernel {
         self.klog("Hypervisor detected: Browser/WASM");
         self.ticks += 10;
 
-        // ============ Memory Init ============
         self.klog(&format!(
             "Memory: {}K/{}K available (kernel code, reserved, data)",
             (self.mem.total * 90) / 100 / 1024,

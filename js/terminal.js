@@ -250,20 +250,22 @@ export async function handleCommand(cmd) {
     start_screensaver();
   } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
     try {
-      if (!window.GraceDesktop) {
-        await import('./grace.js');
+      // Use the Rust-based Desktop now
+      if (window.GraceDesktop && window.GraceDesktop.launch) {
+        window.GraceDesktop.launch();
+        // Hide terminal UI while desktop is active
+        const term = document.getElementById('terminal');
+        if (term) term.style.display = 'none';
+        // Allow returning to terminal via event
+        document.addEventListener('GRACE:OPEN_TERMINAL', () => {
+          const termEl = document.getElementById('terminal');
+          if (termEl) termEl.style.display = '';
+          const root = document.querySelector('.grace-root');
+          if (root) root.style.display = 'none';
+        }, { once: true });
+      } else {
+        print('Grace Desktop not available', 'error');
       }
-      window.GraceDesktop.launch();
-      // Hide terminal UI while desktop is active
-      const term = document.getElementById('terminal');
-      if (term) term.style.display = 'none';
-      // Allow returning to terminal via event
-      document.addEventListener('GRACE:OPEN_TERMINAL', () => {
-        const termEl = document.getElementById('terminal');
-        if (termEl) termEl.style.display = '';
-        const root = document.querySelector('.grace-root');
-        if (root) root.style.display = 'none';
-      }, { once: true });
     } catch (e) {
       print(`Failed to launch Grace: ${e}`, 'error');
     }

@@ -1,0 +1,623 @@
+/* System 6/7 Style Desktop - Grace Desktop Environment */
+
+/* Root container */
+.grace-root {
+    position: fixed;
+    inset: 0;
+    font-family: 'Chicago', 'Geneva', 'Charcoal', -apple-system, sans-serif;
+    font-size: 12px;
+    user-select: none;
+    overflow: hidden;
+}
+
+/* Desktop area - classic gray pattern */
+.s7-desktop {
+    position: absolute;
+    inset: 0;
+    background-color: #a8a8a8;
+    background-image: url("data:image/svg+xml,%3Csvg width='4' height='4' viewBox='0 0 4 4' xmlns='http://www.w3.org/2000/svg'%3E%3Crect x='0' y='0' width='2' height='2' fill='%23999'/%3E%3Crect x='2' y='2' width='2' height='2' fill='%23999'/%3E%3C/svg%3E");
+    background-size: 4px 4px;
+}
+
+/* Menu bar at top */
+.s7-menubar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 20px;
+    background: #fff;
+    border-bottom: 1px solid #000;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    z-index: 9999;
+    font-size: 12px;
+    color: #000;
+}
+
+.s7-apple-menu {
+    font-family: 'Apple Symbols', serif;
+    font-size: 16px;
+    padding: 0 12px 0 4px;
+    cursor: pointer;
+    color: #000;
+}
+
+.s7-apple-menu:hover {
+    background: #000;
+    color: #fff;
+}
+
+.s7-menu-title {
+    padding: 2px 12px;
+    cursor: pointer;
+    color: #000;
+}
+
+.s7-menu-title:hover {
+    background: #000;
+    color: #fff;
+}
+
+.s7-menu-spacer {
+    flex: 1;
+}
+
+.s7-menu-clock {
+    padding-right: 4px;
+    font-variant-numeric: tabular-nums;
+    color: #000;
+}
+
+/* Apple menu dropdown */
+.s7-apple-dropdown {
+    position: absolute;
+    top: 20px;
+    left: 4px;
+    background: #fff;
+    border: 1px solid #000;
+    box-shadow: 2px 2px 0 #000;
+    min-width: 180px;
+    z-index: 10000;
+}
+
+.s7-dropdown-item {
+    padding: 4px 16px;
+    cursor: pointer;
+    color: #000;
+}
+
+.s7-dropdown-item:hover {
+    background: #000;
+    color: #fff;
+}
+
+.s7-dropdown-sep {
+    height: 1px;
+    background: #888;
+    margin: 2px 0;
+}
+
+/* Desktop icons area */
+.s7-desktop-area {
+    position: absolute;
+    top: 20px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 8px;
+}
+
+/* Desktop icons */
+.s7-icon {
+    position: absolute;
+    right: 16px;
+    top: 16px;
+    width: 64px;
+    text-align: center;
+    cursor: pointer;
+    padding: 4px;
+}
+
+.s7-icon:hover .s7-icon-label {
+    background: #000;
+    color: #fff;
+}
+
+.s7-icon-img {
+    width: 32px;
+    height: 32px;
+    margin: 0 auto 4px;
+}
+
+.s7-icon-img svg {
+    width: 100%;
+    height: 100%;
+}
+    margin-bottom: 2px;
+}
+
+.s7-icon-label {
+    font-size: 10px;
+    color: #000;
+    word-wrap: break-word;
+    padding: 1px 2px;
+}
+
+/* Windows container */
+.s7-windows {
+    position: absolute;
+    top: 20px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+/* Window styling - System 7 look */
+.s7-window {
+    position: absolute;
+    background: #fff;
+    border: 1px solid #000;
+    box-shadow: 1px 1px 0 #000;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Title bar with stripes */
+.s7-titlebar {
+    height: 20px;
+    background: linear-gradient(to bottom, #fff 0%, #ddd 100%);
+    border-bottom: 1px solid #000;
+    display: flex;
+    align-items: center;
+    padding: 0 4px;
+    cursor: move;
+    flex-shrink: 0;
+}
+
+/* Active window titlebar has horizontal lines */
+.s7-window:focus-within .s7-titlebar,
+.s7-window.active .s7-titlebar {
+    background: repeating-linear-gradient(
+        to bottom,
+        #fff 0px,
+        #fff 1px,
+        #000 1px,
+        #000 2px,
+        #fff 2px,
+        #fff 3px
+    );
+}
+
+.s7-close-box {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #000;
+    background: #fff;
+    cursor: pointer;
+    margin-right: 6px;
+}
+
+.s7-close-box:hover {
+    background: #000;
+}
+
+.s7-close-box:active {
+    background: #888;
+}
+
+.s7-title {
+    flex: 1;
+    text-align: center;
+    font-weight: bold;
+    font-size: 12px;
+    color: #000;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: #fff;
+    padding: 0 4px;
+}
+
+.s7-zoom-box {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #000;
+    background: #fff;
+    margin-left: 6px;
+    position: relative;
+}
+
+.s7-zoom-box::after {
+    content: '';
+    position: absolute;
+    right: 1px;
+    bottom: 1px;
+    width: 6px;
+    height: 6px;
+    border: 1px solid #000;
+    background: #fff;
+}
+
+/* Window body */
+.s7-window-body {
+    flex: 1;
+    background: #fff;
+    color: #000;
+    overflow: auto;
+    border-top: none;
+}
+
+/* Scrollbar - classic Mac style */
+.s7-window-body::-webkit-scrollbar {
+    width: 16px;
+    height: 16px;
+}
+
+.s7-window-body::-webkit-scrollbar-track {
+    background: repeating-linear-gradient(
+        to bottom,
+        #fff 0px,
+        #fff 1px,
+        #ccc 1px,
+        #ccc 2px
+    );
+    border-left: 1px solid #000;
+}
+
+.s7-window-body::-webkit-scrollbar-thumb {
+    background: #fff;
+    border: 1px solid #000;
+    box-shadow: inset -1px -1px 0 #888;
+}
+
+/* Resize handle */
+.s7-resize-handle {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: se-resize;
+    background: linear-gradient(135deg, transparent 50%, #888 50%, #888 60%, transparent 60%, transparent 70%, #888 70%, #888 80%, transparent 80%);
+}
+
+/* Terminal in System 7 style */
+.s7-terminal {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #fff;
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    color: #000;
+}
+
+.s7-term-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #fff;
+}
+
+.s7-term-line {
+    margin: 0;
+    line-height: 1.4;
+}
+
+.s7-term-cmd {
+    color: #666;
+}
+
+.s7-term-info {
+    color: #008;
+}
+
+.s7-term-error {
+    color: #800;
+}
+
+.s7-term-input-line {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    background: #eee;
+    border-top: 1px solid #000;
+}
+
+.s7-term-prompt {
+    color: #000;
+    margin-right: 4px;
+    white-space: nowrap;
+    font-weight: bold;
+}
+
+.s7-term-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #000;
+    font-family: inherit;
+    font-size: inherit;
+}
+
+/* File Manager */
+.s7-filemanager {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: #fff;
+}
+
+.s7-fm-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #ddd;
+    border-bottom: 1px solid #000;
+}
+
+.s7-btn {
+    background: #fff;
+    border: 1px solid #000;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: inherit;
+    box-shadow: 1px 1px 0 #000;
+}
+
+.s7-btn:hover {
+    background: #eee;
+}
+
+.s7-btn:active {
+    background: #ccc;
+    box-shadow: none;
+    transform: translate(1px, 1px);
+}
+
+.s7-fm-pathbar {
+    display: flex;
+    padding: 4px 8px;
+    background: #eee;
+    border-bottom: 1px solid #999;
+}
+
+.s7-fm-path {
+    flex: 1;
+    font-size: 11px;
+    padding: 2px 8px;
+    background: #fff;
+    border: 1px inset #888;
+}
+
+.s7-fm-list {
+    flex: 1;
+    padding: 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 72px);
+    gap: 8px;
+    align-content: start;
+    overflow-y: auto;
+}
+
+.s7-fm-entry {
+    text-align: center;
+    padding: 4px;
+    cursor: pointer;
+    font-size: 10px;
+}
+
+.s7-fm-entry:hover .s7-fm-entry-label {
+    background: #000;
+    color: #fff;
+}
+
+.s7-fm-entry.selected {
+    background: #000;
+    color: #fff;
+}
+
+.s7-fm-entry.selected .s7-fm-entry-label {
+    background: #000;
+    color: #fff;
+}
+
+.s7-fm-entry-icon {
+    font-size: 32px;
+    line-height: 36px;
+}
+
+.s7-fm-entry-label {
+    margin-top: 2px;
+    word-wrap: break-word;
+    padding: 1px 2px;
+}
+
+.s7-fm-status {
+    padding: 4px 8px;
+    font-size: 10px;
+    background: #ddd;
+    border-top: 1px solid #000;
+}
+
+/* Notepad */
+.s7-notepad {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.s7-notepad-toolbar {
+    display: flex;
+    gap: 4px;
+    padding: 4px 8px;
+    background: #ddd;
+    border-bottom: 1px solid #000;
+}
+
+.s7-notepad-path {
+    flex: 1;
+    font-size: 11px;
+    padding: 2px 8px;
+    background: #fff;
+    border: 1px inset #888;
+}
+
+.s7-notepad-text {
+    flex: 1;
+    width: 100%;
+    background: #fff;
+    color: #000;
+    border: none;
+    outline: none;
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    padding: 8px;
+    box-sizing: border-box;
+    resize: none;
+}
+
+/* About dialog */
+.s7-about {
+    text-align: center;
+    padding: 20px;
+}
+
+.s7-about-icon {
+    font-size: 48px;
+    margin-bottom: 8px;
+}
+
+.s7-about-title {
+    font-weight: bold;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.s7-about-ver {
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 12px;
+}
+
+.s7-about-text {
+    font-size: 11px;
+    color: #333;
+    line-height: 1.4;
+    margin-bottom: 12px;
+}
+
+.s7-about-mem {
+    font-size: 10px;
+    color: #666;
+    padding-top: 8px;
+    border-top: 1px solid #ccc;
+}
+
+/* Dialog buttons */
+.s7-dialog-btn {
+    background: #fff;
+    border: 2px solid #000;
+    border-radius: 4px;
+    padding: 4px 16px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    font-weight: bold;
+}
+
+.s7-dialog-btn:hover {
+    background: #eee;
+}
+
+.s7-dialog-btn.primary,
+.s7-dialog-btn-primary {
+    background: #000;
+    color: #fff;
+}
+
+.s7-dialog-btn.primary:hover,
+.s7-dialog-btn-primary:hover {
+    background: #333;
+}
+
+/* Custom Dialog Overlay */
+.s7-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.s7-dialog {
+    background: #fff;
+    border: 2px solid #000;
+    box-shadow: 2px 2px 0 #000;
+    min-width: 300px;
+    max-width: 400px;
+}
+
+.s7-dialog-titlebar {
+    background: #000;
+    color: #fff;
+    padding: 2px 8px;
+    font-weight: bold;
+    font-size: 12px;
+    text-align: center;
+}
+
+.s7-dialog-body {
+    display: flex;
+    padding: 16px;
+    gap: 12px;
+}
+
+.s7-dialog-icon {
+    font-size: 32px;
+    flex-shrink: 0;
+}
+
+.s7-dialog-content {
+    flex: 1;
+}
+
+.s7-dialog-message {
+    margin-bottom: 12px;
+    line-height: 1.4;
+    color: #000;
+}
+
+.s7-dialog-input {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid #000;
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.s7-dialog-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 16px 12px;
+    border-top: 1px solid #ccc;
+}
+
+/* Terminal warning style */
+.s7-term-warn {
+    color: #a50;
+    font-weight: bold;
+}
