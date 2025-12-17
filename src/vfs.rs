@@ -9,8 +9,8 @@ impl Vfs {
         self.root = root;
     }
 }
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 // Critical system binaries that will crash if deleted
 pub const CRITICAL_BINARIES: &[&str] = &["sh", "bash", "init", "login", "getty"];

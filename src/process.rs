@@ -23,8 +23,8 @@ pub struct Process {
     pub priority: Priority,
     pub time_slice: u32,
     pub remaining_slice: u32,
-    pub memory_offset: u32,    // Memory block offset allocated for this process
-    pub memory_size: u32,      // Size of memory allocated for this process
+    pub memory_offset: u32, // Memory block offset allocated for this process
+    pub memory_size: u32,   // Size of memory allocated for this process
 }
 
 pub struct ProcessTable {
@@ -43,22 +43,30 @@ impl ProcessTable {
             procs: HashMap::new(),
         }
     }
-    pub fn spawn(&mut self, name: &str, ppid: u32, memory: &mut crate::memory::Memory) -> Option<u32> {
+    pub fn spawn(
+        &mut self,
+        name: &str,
+        ppid: u32,
+        memory: &mut crate::memory::Memory,
+    ) -> Option<u32> {
         self.spawn_with_priority(name, ppid, Priority::Normal, memory)
     }
 
-    pub fn spawn_with_priority(&mut self, name: &str, ppid: u32, priority: Priority, memory: &mut crate::memory::Memory) -> Option<u32> {
+    pub fn spawn_with_priority(
+        &mut self,
+        name: &str,
+        ppid: u32,
+        priority: Priority,
+        memory: &mut crate::memory::Memory,
+    ) -> Option<u32> {
         // Allocate memory for the process (stack + heap)
         let process_memory_size = match priority {
-            Priority::High => 128 * 1024,    // 128KB for high priority
-            Priority::Normal => 64 * 1024,   // 64KB for normal priority  
-            Priority::Low => 32 * 1024,      // 32KB for low priority
+            Priority::High => 128 * 1024,  // 128KB for high priority
+            Priority::Normal => 64 * 1024, // 64KB for normal priority
+            Priority::Low => 32 * 1024,    // 32KB for low priority
         };
 
-        let memory_offset = match memory.alloc(process_memory_size) {
-            Some(offset) => offset,
-            None => return None, // Out of memory
-        };
+        let memory_offset = memory.alloc(process_memory_size)?;
 
         let pid = self.next_pid;
         self.next_pid += 1;

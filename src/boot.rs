@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::memory;
+use std::collections::HashMap;
 
 /// Bootloader types
 #[derive(Clone, Debug)]
@@ -66,11 +66,18 @@ impl Bootloader for GrubBootloader {
             "Starting kernel ...".to_string(),
             "".to_string(),
             // Kernel messages start here
-            format!("Linux version {} (wasm-pack) #1 SMP PREEMPT_DYNAMIC", kernel.version),
+            format!(
+                "Linux version {} (wasm-pack) #1 SMP PREEMPT_DYNAMIC",
+                kernel.version
+            ),
             format!("Command line: {}", kernel.cmdline),
             "".to_string(),
             "x86_64 CPU features: SSE SSE2 SSE3 SSSE3 SSE4.1 SSE4.2 AVX AVX2".to_string(),
-            format!("Memory: {:.1}MB total, {:.1}MB available", (memory.total as f64) / (1024.0 * 1024.0), (memory.free as f64) / (1024.0 * 1024.0)),
+            format!(
+                "Memory: {:.1}MB total, {:.1}MB available",
+                (memory.total as f64) / (1024.0 * 1024.0),
+                (memory.free as f64) / (1024.0 * 1024.0)
+            ),
             "Kernel command line: ".to_string() + &kernel.cmdline,
             "".to_string(),
             "Loading kernel modules...".to_string(),
@@ -110,11 +117,18 @@ impl Bootloader for SystemdBootloader {
             "Starting kernel ...".to_string(),
             "".to_string(),
             // Kernel messages start here
-            format!("Linux version {} (wasm-pack) #1 SMP PREEMPT_DYNAMIC", kernel.version),
+            format!(
+                "Linux version {} (wasm-pack) #1 SMP PREEMPT_DYNAMIC",
+                kernel.version
+            ),
             format!("Command line: {}", kernel.cmdline),
             "".to_string(),
             "x86_64 CPU features: SSE SSE2 SSE3 SSSE3 SSE4.1 SSE4.2 AVX AVX2".to_string(),
-            format!("Memory: {:.1}MB total, {:.1}MB available", (memory.total as f64) / (1024.0 * 1024.0), (memory.free as f64) / (1024.0 * 1024.0)),
+            format!(
+                "Memory: {:.1}MB total, {:.1}MB available",
+                (memory.total as f64) / (1024.0 * 1024.0),
+                (memory.free as f64) / (1024.0 * 1024.0)
+            ),
             "Kernel command line: ".to_string() + &kernel.cmdline,
             "".to_string(),
             "Loading kernel modules...".to_string(),
@@ -140,8 +154,14 @@ pub struct BootManager {
 impl BootManager {
     pub fn new() -> Self {
         let mut bootloaders = HashMap::new();
-        bootloaders.insert("grub".to_string(), Box::new(GrubBootloader) as Box<dyn Bootloader>);
-        bootloaders.insert("systemd-boot".to_string(), Box::new(SystemdBootloader) as Box<dyn Bootloader>);
+        bootloaders.insert(
+            "grub".to_string(),
+            Box::new(GrubBootloader) as Box<dyn Bootloader>,
+        );
+        bootloaders.insert(
+            "systemd-boot".to_string(),
+            Box::new(SystemdBootloader) as Box<dyn Bootloader>,
+        );
 
         Self {
             bootloaders,
@@ -214,7 +234,10 @@ impl KernelSimulator {
     pub fn start(&mut self) -> Vec<String> {
         self.running = true;
         let mut output = vec![
-            format!("Linux version {} (wasm-pack) #1 SMP PREEMPT_DYNAMIC", self.config.version),
+            format!(
+                "Linux version {} (wasm-pack) #1 SMP PREEMPT_DYNAMIC",
+                self.config.version
+            ),
             "Command line: ".to_string() + &self.config.cmdline,
             "".to_string(),
             "Kernel command line: ".to_string() + &self.config.cmdline,

@@ -11,6 +11,7 @@ pub mod memory;
 pub mod nano;
 pub mod neofetch;
 pub mod network;
+pub mod persist;
 pub mod physics;
 pub mod process;
 pub mod python;
@@ -19,7 +20,6 @@ pub mod services;
 pub mod shell;
 pub mod system;
 pub mod vfs;
-pub mod persist;
 pub mod vfs_persist;
 
 pub use desktop::Desktop;

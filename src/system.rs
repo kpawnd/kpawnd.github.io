@@ -53,9 +53,9 @@ impl System {
         };
 
         // Auto-start system services
-        system
-            .services
-            .auto_start_services(&mut |name| system.kernel.proc.spawn(name, 1, &mut system.kernel.mem));
+        system.services.auto_start_services(&mut |name| {
+            system.kernel.proc.spawn(name, 1, &mut system.kernel.mem)
+        });
 
         system
     }
@@ -157,9 +157,9 @@ impl System {
             "reboot" => "\x1b[REBOOT]".into(),
             "echo" => { let out=args.join(" "); if out=="github" { format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap()) } else { out } }
             "help" => "Available commands:\n\n  File operations:    cat cd chmod chown cp cut diff du file find head ln ls mkdir mv pwd rm rmdir sort tail tee touch tr uniq wc nano vi\n  Text processing:    awk grep sed\n  System info:        df free hostname id man neofetch ps top uname uptime whereis which whoami\n  Network:            arp curl dig host ifconfig ip myip nc netstat nslookup\n                      ping route ss traceroute wget\n  Archives:           tar gzip gunzip zip unzip\n  Package mgmt:       apt apt-get\n  Games:              doom doommap mp\n  Other:              alias clear echo env exit export grub hasgrub help history kill\n                      python screensaver service sudo\n\nType 'man <command>' for more info on a specific command.".into(),
-            "man" => self.cmd_man(&args),
+            "man" => self.cmd_man(args),
             "neofetch" => "\x1b[NEOFETCH_DATA]".to_string(),
-            "nano" | "vi" | "vim" => self.cmd_nano(&args),
+            "nano" | "vi" | "vim" => self.cmd_nano(args),
             "python" => { if args.is_empty() { self.start_python_repl() } else { "python: script execution not supported".to_string() } }
             "doom" => {
                 // Parse optional difficulty argument: easy|normal|hard or 0|1|2
@@ -209,50 +209,50 @@ impl System {
                 }
             },
             "screensaver" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
-            "wget" => self.cmd_wget(&args),
-            "curl" => self.cmd_curl(&args),
+            "wget" => self.cmd_wget(args),
+            "curl" => self.cmd_curl(args),
             "myip" => self.cmd_myip(),
-            "ls" => self.cmd_ls(&args),
-            "cd" => self.cmd_cd(&args),
+            "ls" => self.cmd_ls(args),
+            "cd" => self.cmd_cd(args),
             "pwd" => self.kernel.fs.cwd.clone(),
-            "cat" => self.cmd_cat(&args),
-            "grep" => self.cmd_grep(&args),
-            "find" => self.cmd_find(&args),
-            "wc" => self.cmd_wc(&args),
-            "head" => self.cmd_head(&args),
-            "tail" => self.cmd_tail(&args),
-            "diff" => self.cmd_diff(&args),
-            "sort" => self.cmd_sort(&args),
-            "uniq" => self.cmd_uniq(&args),
-            "cut" => self.cmd_cut(&args),
-            "tr" => self.cmd_tr(&args),
-            "tee" => self.cmd_tee(&args),
-            "which" => self.cmd_which(&args),
-            "whereis" => self.cmd_whereis(&args),
-            "file" => self.cmd_file(&args),
-            "ln" => self.cmd_ln(&args),
-            "cp" => self.cmd_cp(&args),
-            "mv" => self.cmd_mv(&args),
-            "chmod" => self.cmd_chmod(&args),
-            "chown" => self.cmd_chown(&args),
-            "df" => self.cmd_df(&args),
-            "du" => self.cmd_du(&args),
-            "tar" => self.cmd_tar(&args),
-            "gzip" | "gunzip" => self.cmd_gzip(&args, cmd),
-            "zip" | "unzip" => self.cmd_zip(&args, cmd),
-            "apt" | "apt-get" => self.cmd_apt(&args),
+            "cat" => self.cmd_cat(args),
+            "grep" => self.cmd_grep(args),
+            "find" => self.cmd_find(args),
+            "wc" => self.cmd_wc(args),
+            "head" => self.cmd_head(args),
+            "tail" => self.cmd_tail(args),
+            "diff" => self.cmd_diff(args),
+            "sort" => self.cmd_sort(args),
+            "uniq" => self.cmd_uniq(args),
+            "cut" => self.cmd_cut(args),
+            "tr" => self.cmd_tr(args),
+            "tee" => self.cmd_tee(args),
+            "which" => self.cmd_which(args),
+            "whereis" => self.cmd_whereis(args),
+            "file" => self.cmd_file(args),
+            "ln" => self.cmd_ln(args),
+            "cp" => self.cmd_cp(args),
+            "mv" => self.cmd_mv(args),
+            "chmod" => self.cmd_chmod(args),
+            "chown" => self.cmd_chown(args),
+            "df" => self.cmd_df(args),
+            "du" => self.cmd_du(args),
+            "tar" => self.cmd_tar(args),
+            "gzip" | "gunzip" => self.cmd_gzip(args, cmd),
+            "zip" | "unzip" => self.cmd_zip(args, cmd),
+            "apt" | "apt-get" => self.cmd_apt(args),
             "top" => self.cmd_top(),
-            "awk" => self.cmd_awk(&args),
-            "sed" => self.cmd_sed(&args),
-            "alias" => self.cmd_alias(&args),
-            "touch" => self.cmd_touch(&args),
-            "mkdir" => self.cmd_mkdir(&args),
-            "rm" => self.cmd_rm(&args),
+            "awk" => self.cmd_awk(args),
+            "sed" => self.cmd_sed(args),
+            "alias" => self.cmd_alias(args),
+            "touch" => self.cmd_touch(args),
+            "mkdir" => self.cmd_mkdir(args),
+            "rm" => self.cmd_rm(args),
             "clear" => "\x1b[CLEAR]".into(),
             "exit" => "\x1b[EXIT]".into(),
             "ps" => self.cmd_ps(),
-            "kill" => self.cmd_kill(&args),
-            "uname" => self.cmd_uname(&args),
+            "kill" => self.cmd_kill(args),
+            "uname" => self.cmd_uname(args),
             "hostname" => self.cmd_hostname(),
             "id" => {
                 let user = self
@@ -273,19 +273,19 @@ impl System {
             "free" => self.cmd_free(),
             "history" => self.cmd_history(),
             "env" => self.cmd_env(),
-            "export" => self.cmd_export(&args),
-            "netstat" => self.cmd_netstat(&args),
-            "ss" => self.cmd_ss(&args),
-            "socket" => self.cmd_socket(&args),
-            "service" => self.cmd_service(&args),
-            "ping" => self.cmd_ping(&args),
-            "traceroute" | "tracert" => self.cmd_traceroute(&args),
-            "ifconfig" => self.cmd_ifconfig(&args),
-            "ip" => self.cmd_ip(&args),
-            "route" => self.cmd_route(&args),
-            "arp" => self.cmd_arp(&args),
-            "host" | "nslookup" | "dig" => self.cmd_host(&args),
-            "nc" | "netcat" => self.cmd_nc(&args),
+            "export" => self.cmd_export(args),
+            "netstat" => self.cmd_netstat(args),
+            "ss" => self.cmd_ss(args),
+            "socket" => self.cmd_socket(args),
+            "service" => self.cmd_service(args),
+            "ping" => self.cmd_ping(args),
+            "traceroute" | "tracert" => self.cmd_traceroute(args),
+            "ifconfig" => self.cmd_ifconfig(args),
+            "ip" => self.cmd_ip(args),
+            "route" => self.cmd_route(args),
+            "arp" => self.cmd_arp(args),
+            "host" | "nslookup" | "dig" => self.cmd_host(args),
+            "nc" | "netcat" => self.cmd_nc(args),
             "hasgrub" => if self.has_grub() { "yes".into() } else { "no".into() },
             "grub" => {
                 if args.is_empty() {
@@ -296,7 +296,7 @@ impl System {
                         if args.len() < 2 {
                             return "usage: grub switch <bootloader>".into();
                         }
-                        match self.boot.set_bootloader(&args[1]) {
+                        match self.boot.set_bootloader(args[1]) {
                             Ok(_) => format!("Switched to {} bootloader", args[1]),
                             Err(e) => format!("Error: {}", e),
                         }
@@ -2589,7 +2589,8 @@ SEE ALSO
 
     #[wasm_bindgen]
     pub fn boot_switch_bootloader(&mut self, name: &str) -> Result<(), JsValue> {
-        self.boot.set_bootloader(name)
+        self.boot
+            .set_bootloader(name)
             .map_err(|e| JsValue::from_str(&e))
     }
 

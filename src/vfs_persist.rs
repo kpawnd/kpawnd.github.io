@@ -1,5 +1,5 @@
+use crate::persist::{idb_load_vfs, idb_save_vfs};
 use crate::vfs::Inode;
-use crate::persist::{idb_save_vfs, idb_load_vfs};
 use serde_json;
 
 impl Inode {
