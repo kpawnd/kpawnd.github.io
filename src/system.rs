@@ -2045,11 +2045,14 @@ DESCRIPTION
             ));
         }
 
-        if out.is_empty() && filter.is_some() {
-            format!(
-                "{}: error fetching interface information: Device not found",
-                filter.unwrap()
-            )
+        if out.is_empty() {
+            match filter {
+                Some(name) => format!(
+                    "{}: error fetching interface information: Device not found",
+                    name
+                ),
+                None => out,
+            }
         } else {
             out
         }

@@ -16,7 +16,7 @@ struct DesktopWindow {
     y: i32,
     width: u32,
     height: u32,
-    minimized: bool,
+    // minimized: bool, // Removed to fix clippy dead_code warning
     window_type: WindowType,
 }
 
@@ -138,7 +138,6 @@ impl Desktop {
                 y: 40 + (id as i32 * 20) % 80,
                 width,
                 height,
-                minimized: false,
                 window_type,
             };
             s.windows.push(win);
@@ -167,8 +166,6 @@ impl Desktop {
 
         let _ = root.set_attribute("style", "display:block");
 
-        // Build desktop HTML - System 6/7 style with B&W icons
-        // Use string concatenation instead of format! to avoid issues with hyphens
         // Use r##" "## to allow # inside the string
         let hd_icon = r##"<svg viewBox="0 0 32 32" fill="none" stroke="#000" stroke-width="1.5"><rect x="4" y="6" width="24" height="20" rx="1"></rect><path d="M4 10h24"></path><rect x="8" y="3" width="10" height="7" rx="1"></rect></svg>"##;
         let trash_icon = r##"<svg viewBox="0 0 32 32" fill="none" stroke="#000" stroke-width="1.5"><path d="M8 10h16v18H8z"></path><path d="M6 10h20"></path><path d="M12 6h8v4h-8z"></path><path d="M12 14v10M16 14v10M20 14v10"></path></svg>"##;
@@ -189,7 +186,7 @@ impl Desktop {
             r#"<div class="s7-icon-img">"#,
             hd_icon,
             r#"</div>"#,
-            r#"<div class="s7-icon-label">Macintosh HD</div>"#,
+            r#"<div class="s7-icon-label">HD</div>"#,
             r#"</div>"#,
             r#"<div class="s7-icon" style="top:90px" ondblclick="window.GraceDesktop.openTrash()">"#,
             r#"<div class="s7-icon-img">"#,
@@ -533,7 +530,7 @@ impl Desktop {
         }
     }
 
-    /// Toggle the Apple menu dropdown
+    /// Toggle the menu dropdown
     #[wasm_bindgen]
     pub fn toggle_apple_menu() {
         if let Some(doc) = Self::get_document() {
@@ -548,7 +545,7 @@ impl Desktop {
         }
     }
 
-    /// Shutdown - return to terminal
+    /// Shutdown returns to terminal
     #[wasm_bindgen]
     pub fn shutdown() {
         Self::hide();
@@ -617,7 +614,7 @@ impl Desktop {
         })
     }
 
-    /// Open trash (empty for now)
+    /// Open trash
     #[wasm_bindgen]
     pub fn open_trash() {
         // Placeholder
