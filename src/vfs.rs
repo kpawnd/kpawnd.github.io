@@ -1,11 +1,23 @@
+impl Vfs {
+    /// Get a clone of the root inode (for persistence)
+    pub fn root_clone(&self) -> Inode {
+        self.root.clone()
+    }
+
+    /// Replace the root inode (for persistence load)
+    pub fn set_root(&mut self, root: Inode) {
+        self.root = root;
+    }
+}
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
 // Critical system binaries that will crash if deleted
 pub const CRITICAL_BINARIES: &[&str] = &["sh", "bash", "init", "login", "getty"];
 pub const IMPORTANT_BINARIES: &[&str] =
     &["ls", "cat", "cd", "pwd", "rm", "mkdir", "touch", "cp", "mv"];
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Inode {
     pub name: String,
     pub is_dir: bool,
@@ -1114,5 +1126,20 @@ impl Vfs {
             }
         }
         Ok(())
+    }
+
+    /// Load filesystem state from IndexedDB persistence
+    pub async fn load_from_persistence(&mut self) {
+        if let Some(root) = Inode::load_from_indexeddb().await {
+            self.root = root;
+        } else {
+            // If no persisted state, initialize fresh filesystem
+            self.init();
+        }
+    }
+
+    /// Save filesystem state to IndexedDB persistence
+    pub async fn save_to_persistence(&self) {
+        self.root.save_to_indexeddb().await;
     }
 }

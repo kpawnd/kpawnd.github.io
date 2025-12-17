@@ -52,8 +52,10 @@ const GraceDialog = {
   
   // Show a prompt dialog
   prompt: (message, defaultValue = '', title = 'Input') => {
+    console.log('GraceDialog.prompt called:', { message, defaultValue, title });
     return new Promise((resolve) => {
       const id = GraceDialog._nextId++;
+      console.log('Creating dialog with id:', id);
       GraceDialog._resolvers[id] = resolve;
       GraceDialog._show({
         id, title, message, defaultValue,
@@ -83,16 +85,20 @@ const GraceDialog = {
   },
   
   _show: (opts) => {
+    console.log('GraceDialog._show called with opts:', opts);
     // Append to grace-root or body to ensure it covers everything
     const container = document.querySelector('.grace-root') || document.body;
+    console.log('Dialog container:', container);
     
     const dialog = document.createElement('div');
     dialog.className = 's7-dialog-overlay';
     dialog.id = `s7-dialog-${opts.id}`;
+    console.log('Created dialog element:', dialog);
     
     const inputHtml = opts.type === 'prompt' 
       ? `<input type="text" class="s7-dialog-input" id="s7-dialog-input-${opts.id}" value="${opts.defaultValue || ''}">`
       : '';
+    console.log('Input HTML:', inputHtml);
     
     const buttonsHtml = opts.buttons.map(b => 
       `<button class="s7-dialog-btn${b.primary ? ' s7-dialog-btn-primary' : ''}" data-action="${b.action}">${b.text}</button>`
@@ -116,30 +122,42 @@ const GraceDialog = {
     dialog.querySelectorAll('.s7-dialog-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const action = btn.dataset.action;
+        console.log('Dialog button clicked:', action);
         const resolver = GraceDialog._resolvers[opts.id];
+        let value = null;
+        if (action === 'ok' && opts.type === 'prompt') {
+          const input = document.getElementById(`s7-dialog-input-${opts.id}`);
+          console.log('Looking for input element:', `s7-dialog-input-${opts.id}`);
+          console.log('Input element found:', input);
+          value = input ? input.value : null;
+          console.log('Input value:', value);
+        }
         delete GraceDialog._resolvers[opts.id];
         dialog.remove();
-        
         if (action === 'ok') {
           if (opts.type === 'prompt') {
-            const input = document.getElementById(`s7-dialog-input-${opts.id}`);
-            resolver(input ? input.value : null);
+            resolver(value);
           } else if (opts.type === 'confirm') {
             resolver(true);
           } else {
             resolver();
           }
         } else {
-          resolver(opts.type === 'prompt' ? null : false);
+          const result = opts.type === 'prompt' ? null : false;
+          console.log('Dialog resolved with:', result);
+          resolver(result);
         }
       });
     });
     
     container.appendChild(dialog);
+    console.log('Dialog appended to DOM');
+    console.log('Dialog innerHTML:', dialog.innerHTML);
     
     // Focus input if prompt
     if (opts.type === 'prompt') {
       const input = document.getElementById(`s7-dialog-input-${opts.id}`);
+      console.log('Input element after append:', input);
       if (input) {
         input.focus();
         input.select();
@@ -301,8 +319,75 @@ function setupGraceDesktopBridge() {
         window.GraceDesktop.printTerminal(windowId, 'logout', 's7-term-info');
       } else if (result === '\x1b[NEOFETCH_DATA]') {
         try {
-          const logo = neofetch_logo(sys.exec('uname -n') || 'kpawnd');
-          logo.split('\n').forEach(l => window.GraceDesktop.printTerminal(windowId, l, ''));
+          // Use the JavaScript neofetch implementation for Grace desktop
+          // This provides proper formatting with system info alongside the logo
+          const ua = navigator.userAgent;
+          const info = {
+            os: 'Unknown',
+            hostname: sys.exec('uname -n') || 'kpawnd',
+            user: 'user',
+            kernel: 'Unknown',
+            browser: 'Unknown',
+            cpu: `${navigator.hardwareConcurrency || 'Unknown'} cores`,
+            memory: 'Unknown',
+            resolution: `${window.innerWidth}x${window.innerHeight}`,
+            uptime: Math.floor(performance.now() / 1000)
+          };
+
+          // Detect OS
+          if (ua.includes('Win')) info.os = 'Windows';
+          else if (ua.includes('Mac')) info.os = 'macOS';
+          else if (ua.includes('Linux')) info.os = 'Linux';
+          else if (ua.includes('Android')) info.os = 'Android';
+          else if (/iOS|iPhone|iPad/.test(ua)) info.os = 'iOS';
+
+          // Detect browser
+          if (ua.includes('Firefox')) info.browser = 'Firefox';
+          else if (ua.includes('Edg')) info.browser = 'Edge';
+          else if (ua.includes('Chrome')) info.browser = 'Chrome';
+          else if (ua.includes('Safari')) info.browser = 'Safari';
+
+          // Detect architecture
+          if (/x64|x86_64|Win64/.test(ua)) info.kernel = 'x86_64';
+          else if (/ARM|aarch64/.test(ua)) info.kernel = 'ARM64';
+          else if (ua.includes('x86')) info.kernel = 'x86';
+
+          // Memory estimation
+          if (navigator.deviceMemory) {
+            info.memory = `${navigator.deviceMemory} GB`;
+          } else if (performance.memory?.jsHeapSizeLimit) {
+            const heapGB = performance.memory.jsHeapSizeLimit / (1024 ** 3);
+            info.memory = `~${Math.ceil(heapGB * 4)} GB (estimated)`;
+          }
+
+          // Format uptime
+          const hours = Math.floor(info.uptime / 3600);
+          const mins = Math.floor((info.uptime % 3600) / 60);
+          const uptimeStr = hours > 0 ? `${hours} hours, ${mins} mins` : `${mins} mins`;
+
+          const logoBlock = neofetch_logo(info.os).replace(/\x1b\[COLOR:[^\]]*\]/g, '').split('\n');
+          const infoLines = [
+            `${info.user}@${info.hostname}`,
+            '─'.repeat(`${info.user}@${info.hostname}`.length),
+            `OS: ${info.os}`,
+            `Host: ${info.browser}`,
+            `Kernel: ${info.kernel}`,
+            `Uptime: ${uptimeStr}`,
+            `Shell: kpawnd-sh`,
+            `Resolution: ${info.resolution}`,
+            `Terminal: ${info.browser}`,
+            `CPU: ${info.cpu}`,
+            ...(info.memory !== 'Unknown' ? [`Memory: ${info.memory}`] : [])
+          ];
+
+          const maxLogoWidth = Math.max(...logoBlock.map(l => l.length));
+
+          for (let i = 0; i < Math.max(logoBlock.length, infoLines.length); i++) {
+            const l = logoBlock[i] || '';
+            const r = infoLines[i] || '';
+            const padding = ' '.repeat(maxLogoWidth - l.length + 3);
+            window.GraceDesktop.printTerminal(windowId, l + padding + r, '');
+          }
         } catch (e) {
           window.GraceDesktop.printTerminal(windowId, 'Neofetch failed', 's7-term-error');
         }
@@ -324,6 +409,11 @@ function setupGraceDesktopBridge() {
         const colonIdx = content.indexOf(':');
         // Open notepad instead
         Desktop.open_notepad();
+      } else if (result.startsWith('\x1b[BOOT_SEQUENCE:')) {
+        // Handle boot sequence animation
+        const messagesStr = result.slice(15, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
+        const messages = messagesStr.split('|');
+        showBootSequence(messages);
       } else if (result === '\x1b[REBOOT]') {
         window.GraceDesktop.printTerminal(windowId, 'Rebooting...', 's7-term-info');
         setTimeout(() => window.dispatchEvent(new CustomEvent('KP_REBOOT')), 500);
@@ -494,8 +584,8 @@ function setupGraceDesktopBridge() {
       console.log('Current path from element:', path);
       
       if (!path) {
-        // Use browser prompt for reliability
-        path = prompt('Save file as:', '/home/user/untitled.txt');
+        // Prompt using in-app dialog instead of native browser prompt
+        path = await GraceDialog.prompt('Save file as:', '/home/user/untitled.txt', 'Save File As');
         console.log('User entered path:', path);
         if (!path) {
           console.log('User cancelled');
@@ -568,7 +658,7 @@ function setupGraceDesktopBridge() {
     fmNewFolder: async (windowId) => {
       console.log('=== fmNewFolder START ===');
       
-      const name = prompt('Enter folder name:', 'New Folder');
+      const name = await GraceDialog.prompt('Enter folder name:', 'New Folder', 'New Folder');
       console.log('User entered name:', name);
       if (!name) return;
       
@@ -589,10 +679,10 @@ function setupGraceDesktopBridge() {
       console.log('fs_mkdir result:', result);
       
       if (result) {
-        alert('Folder created: ' + newPath);
+        await GraceDialog.alert('Folder created: ' + newPath, 'Folder Created');
         window.GraceDesktop.fmNavigate(windowId, currentPath);
       } else {
-        alert('Failed to create folder. It may already exist.');
+        await GraceDialog.alert('Failed to create folder. It may already exist.', 'Error');
       }
       console.log('=== fmNewFolder END ===');
     },
@@ -624,6 +714,42 @@ function setupGraceDesktopBridge() {
   };
 }
 
+// Handle boot sequence animation
+function showBootSequence(messages) {
+  let index = 0;
+  const terminal = document.getElementById('terminal');
+  const output = document.getElementById('output');
+
+  // Boot happens with GRUB visible, terminal hidden
+
+  function showNextMessage() {
+    if (index >= messages.length) {
+      // Boot complete - hide GRUB and show terminal
+      setTimeout(() => {
+        document.getElementById('grub').style.display = 'none';
+        terminal.style.display = 'flex';
+        if (getSystem().post_boot_clear_needed()) {
+          getSystem().acknowledge_post_boot();
+          output.innerHTML = '';
+        }
+        // Setup terminal like normal boot
+        const promptEl = document.getElementById('prompt');
+        if (promptEl) promptEl.textContent = getSystem().prompt();
+      }, 2000);
+      return;
+    }
+
+    const message = messages[index];
+    if (message && message.trim()) {
+      print(message, 'boot');
+    }
+    index++;
+    setTimeout(showNextMessage, 80);
+  }
+
+  showNextMessage();
+}
+
 // entry point
 async function main() {
   try {
@@ -649,8 +775,12 @@ async function main() {
     // doom_multiplayer_connect('ws://localhost:8081')
     
     // Create system instances
-    setSystem(new System());
+    const system = new System();
+    setSystem(system);
     setGrubMenu(new GrubMenu());
+    
+    // Initialize system with persistence
+    await system.init();
     
     // Setup Grace Desktop bridge
     setupGraceDesktopBridge();
@@ -671,9 +801,31 @@ async function main() {
 main();
 setTimeout(() => start_idle_timer(60000), 1000);
 
+// Save system state before unload
+window.addEventListener('beforeunload', async () => {
+  const system = getState().system;
+  if (system && typeof system.save === 'function') {
+    try {
+      await system.save();
+    } catch (e) {
+      console.warn('Failed to save system state:', e);
+    }
+  }
+});
+
 // Handle reboot by reinitializing System and GRUB, preserving user files
 window.addEventListener('KP_REBOOT', async () => {
   try {
+    // Save current system state before reboot
+    const currentSystem = getState().system;
+    if (currentSystem && typeof currentSystem.save === 'function') {
+      try {
+        await currentSystem.save();
+      } catch (e) {
+        console.warn('Failed to save system state before reboot:', e);
+      }
+    }
+    
     // Hide Grace desktop if visible
     const graceRoot = document.querySelector('.grace-root');
     if (graceRoot) graceRoot.style.display = 'none';

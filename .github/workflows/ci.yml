@@ -8,49 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  autofix:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: ${{ github.head_ref || github.ref }}
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: stable
-          targets: wasm32-unknown-unknown
-          components: clippy, rustfmt
-
-      - name: Auto-fix formatting
-        run: cargo fmt --all
-
-      - name: Auto-fix clippy issues
-        run: cargo clippy --fix --allow-dirty --allow-staged --target wasm32-unknown-unknown --all-targets || true
-
-      - name: Commit and push fixes
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git diff --quiet && git diff --staged --quiet || (git add -A && git commit -m "Auto-fix: rustfmt + clippy" && git push)
-
   build-wasm:
-    needs: autofix
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -95,13 +53,6 @@ jobs:
 
       - name: Build WASM (release)
         run: wasm-pack build --release --target web --out-dir pkg
-
-      - name: Upload pkg artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm-pkg
-          path: pkg/
-          retention-days: 7
 
       - name: Upload Pages artifact (full site)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

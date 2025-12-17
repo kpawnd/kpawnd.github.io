@@ -23,6 +23,8 @@ pub struct Process {
     pub priority: Priority,
     pub time_slice: u32,
     pub remaining_slice: u32,
+    pub memory_offset: u32,    // Memory block offset allocated for this process
+    pub memory_size: u32,      // Size of memory allocated for this process
 }
 
 pub struct ProcessTable {
@@ -41,11 +43,23 @@ impl ProcessTable {
             procs: HashMap::new(),
         }
     }
-    pub fn spawn(&mut self, name: &str, ppid: u32) -> u32 {
-        self.spawn_with_priority(name, ppid, Priority::Normal)
+    pub fn spawn(&mut self, name: &str, ppid: u32, memory: &mut crate::memory::Memory) -> Option<u32> {
+        self.spawn_with_priority(name, ppid, Priority::Normal, memory)
     }
 
-    pub fn spawn_with_priority(&mut self, name: &str, ppid: u32, priority: Priority) -> u32 {
+    pub fn spawn_with_priority(&mut self, name: &str, ppid: u32, priority: Priority, memory: &mut crate::memory::Memory) -> Option<u32> {
+        // Allocate memory for the process (stack + heap)
+        let process_memory_size = match priority {
+            Priority::High => 128 * 1024,    // 128KB for high priority
+            Priority::Normal => 64 * 1024,   // 64KB for normal priority  
+            Priority::Low => 32 * 1024,      // 32KB for low priority
+        };
+
+        let memory_offset = match memory.alloc(process_memory_size) {
+            Some(offset) => offset,
+            None => return None, // Out of memory
+        };
+
         let pid = self.next_pid;
         self.next_pid += 1;
 
@@ -65,9 +79,11 @@ impl ProcessTable {
                 priority,
                 time_slice,
                 remaining_slice: time_slice,
+                memory_offset,
+                memory_size: process_memory_size,
             },
         );
-        pid
+        Some(pid)
     }
 
     pub fn list(&self) -> Vec<&Process> {
@@ -76,11 +92,17 @@ impl ProcessTable {
         v
     }
 
-    pub fn kill(&mut self, pid: u32) -> bool {
+    pub fn kill(&mut self, pid: u32, memory: &mut crate::memory::Memory) -> bool {
         if pid <= 1 {
             return false;
         }
-        self.procs.remove(&pid).is_some()
+        if let Some(process) = self.procs.remove(&pid) {
+            // Free the process memory
+            memory.free(process.memory_offset);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn get_mut(&mut self, pid: u32) -> Option<&mut Process> {

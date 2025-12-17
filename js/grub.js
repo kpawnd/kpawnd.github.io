@@ -86,22 +86,28 @@ export function showGrub() {
 
 function updateGrubDisplay() {
   const grubPre = document.querySelector('#grub pre');
-  grubPre.innerHTML = state.grubMenu.render()
+  const currentBootloader = state.system.boot_get_current_bootloader();
+  let display = state.grubMenu.render();
+
+  // Add current bootloader info at the top
+  const bootloaderInfo = `Current Bootloader: ${currentBootloader.toUpperCase()}\n\n`;
+  display = bootloaderInfo + display;
+
+  grubPre.innerHTML = display
     .replace(/\x1b\[HIGHLIGHT\]/g, '<span class="grub-selected">')
     .replace(/\x1b\[NORMAL\]/g, '</span>');
 }
 
 function bootSelected() {
   const selected = state.grubMenu.get_selected();
-  getElement('grub').style.display = 'none';
-  getElement('terminal').style.display = 'flex';
+  if (selected !== 2) {
+    getElement('grub').style.display = 'none';
+    getElement('terminal').style.display = 'flex';
+  }
 
   if (selected === 2) {
-    print('Entering UEFI Firmware Settings...', 'info');
-    print('(Simulated - no real firmware access)', 'info');
-    print('', 'output');
+    // UEFI boot - delay then begin boot with GRUB visible
     setTimeout(() => {
-      getElement('output').innerHTML = '';
       beginBoot();
     }, 2000);
   } else {

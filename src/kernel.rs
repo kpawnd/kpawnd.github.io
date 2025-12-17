@@ -1,7 +1,7 @@
 use crate::{memory::Memory, process::ProcessTable, process::Scheduler, vfs::Vfs};
 
 pub const VERSION: &str = "0.6.7";
-pub const TOTAL_MEM: u32 = 131072; // 128KB
+pub const TOTAL_MEM: u32 = 33554432; // 32MB
 pub const KERNEL_VERSION: &str = "6.7.0-kpawnd";
 
 #[derive(PartialEq, Clone, Copy)]
@@ -23,6 +23,8 @@ pub struct Kernel {
     log: Vec<String>,
     boot_index: usize,
     pub scheduler: Scheduler,
+    pub memory_panic: bool,
+    pub memory_panic_reason: String,
 }
 
 impl Default for Kernel {
@@ -42,6 +44,8 @@ impl Kernel {
             log: Vec::new(),
             boot_index: 0,
             scheduler: Scheduler::new(),
+            memory_panic: false,
+            memory_panic_reason: String::new(),
         }
     }
     fn klog(&mut self, msg: &str) {
@@ -50,6 +54,28 @@ impl Kernel {
     }
     fn raw_log(&mut self, msg: &str) {
         self.log.push(msg.to_string());
+    }
+    fn memory_panic(&mut self, reason: &str) {
+        self.memory_panic = true;
+        self.memory_panic_reason = format!(
+            "KERNEL PANIC - not syncing: Out of memory: {}\n\
+             \n\
+             CPU: 0 PID: 1 Comm: kernel Not tainted 6.1.0-kpawnd #1\n\
+             Hardware name: WASM Virtual Machine\n\
+             Call Trace:\n\
+              <TASK>\n\
+              __alloc_pages+0x1a/0x30\n\
+              alloc_pages+0x2c/0x40\n\
+              __get_free_pages+0x1c/0x30\n\
+              </TASK>\n\
+             \n\
+             Memory: {}K/{}K available\n\
+             ---[ end Kernel panic - not syncing: {} ]---",
+            reason,
+            self.mem.free / 1024,
+            self.mem.total / 1024,
+            reason
+        );
     }
     pub fn generate_boot_log(&mut self) {
         if !self.log.is_empty() {
@@ -102,7 +128,10 @@ impl Kernel {
             self.mem.total / 1024
         ));
         self.ticks += 5;
-        let _ = self.mem.alloc(4096);
+        if self.mem.alloc(4096).is_none() {
+            self.memory_panic("Failed to allocate kernel memory during boot");
+            return;
+        }
         self.klog(&format!(
             "Zone ranges: Normal [mem 0x00000000-0x{:08x}]",
             self.mem.total
@@ -184,7 +213,13 @@ impl Kernel {
         self.ticks += 5;
 
         // ============ Systemd Init ============
-        let init_pid = self.proc.spawn("init", 0);
+        let init_pid = match self.proc.spawn("init", 0, &mut self.mem) {
+            Some(pid) => pid,
+            None => {
+                self.memory_panic("Failed to allocate memory for init process");
+                return;
+            }
+        };
         self.klog(&format!(
             "Run /sbin/init as init process (pid {})",
             init_pid
@@ -267,7 +302,13 @@ impl Kernel {
         self.raw_log("[  OK  ] Reached target Login Prompts.");
         self.ticks += 5;
 
-        let sh_pid = self.proc.spawn("sh", init_pid);
+        let sh_pid = match self.proc.spawn("sh", init_pid, &mut self.mem) {
+            Some(pid) => pid,
+            None => {
+                self.memory_panic("Failed to allocate memory for shell process");
+                return;
+            }
+        };
         self.scheduler.add(sh_pid, crate::process::Priority::Normal);
         self.ticks += 10;
         self.raw_log("[  OK  ] Reached target Multi-User System.");
@@ -302,5 +343,15 @@ impl Kernel {
     }
     pub fn uptime_ms(&self) -> u64 {
         self.ticks / 1000
+    }
+
+    /// Initialize kernel with persistence loading
+    pub async fn init(&mut self) {
+        self.fs.load_from_persistence().await;
+    }
+
+    /// Save kernel state to persistence
+    pub async fn save(&self) {
+        self.fs.save_to_persistence().await;
     }
 }

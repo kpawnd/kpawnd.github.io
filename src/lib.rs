@@ -1,3 +1,4 @@
+pub mod boot;
 pub mod desktop;
 pub mod doom;
 pub mod graphics;
@@ -18,6 +19,8 @@ pub mod services;
 pub mod shell;
 pub mod system;
 pub mod vfs;
+pub mod persist;
+pub mod vfs_persist;
 
 pub use desktop::Desktop;
 pub use doom::{memory_usage, start_doom, stop_doom};

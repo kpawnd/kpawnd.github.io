@@ -3,20 +3,14 @@ import { print, scrollToBottom, getElement } from './dom.js';
 import { setupTerminal } from './terminal.js';
 
 export function beginBoot() {
-  state.system.start_boot();
-  drainBootLines();
+  // Use the new modular boot system
+  const bootMessages = state.system.boot_simulate_sequence();
+  drainBootLines(bootMessages, 0);
 }
 
-function drainBootLines() {
-  const line = state.system.next_boot_line();
-  if (line === null || line === undefined) return;
-
-  if (line !== '') {
-    print(line, 'boot');
-    scrollToBottom();
-  }
-
-  if (line.includes('BOOT_COMPLETE')) {
+function drainBootLines(messages, index) {
+  if (index >= messages.length) {
+    // Boot complete
     setTimeout(() => {
       if (state.system.post_boot_clear_needed()) {
         state.system.acknowledge_post_boot();
@@ -24,7 +18,14 @@ function drainBootLines() {
       }
       setupTerminal();
     }, 2000);
-  } else {
-    setTimeout(drainBootLines, 80);
+    return;
   }
+
+  const line = messages[index];
+  if (line !== '') {
+    print(line, 'boot');
+    scrollToBottom();
+  }
+
+  setTimeout(() => drainBootLines(messages, index + 1), 80);
 }

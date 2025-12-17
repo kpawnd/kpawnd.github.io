@@ -307,9 +307,9 @@ impl Desktop {
             r#"
             <div class="s7-filemanager" id="s7-fm-{}">
                 <div class="s7-fm-toolbar">
-                    <button class="s7-btn" onclick="window.GraceDesktop.fmUp({})">↑ Up</button>
-                    <button class="s7-btn" onclick="window.GraceDesktop.fmNewFolder({})">New Folder</button>
-                    <button class="s7-btn" onclick="window.GraceDesktop.fmDelete({})">Delete</button>
+                    <button class="s7-btn" onclick="(async () => await window.GraceDesktop.fmUp({}))()">↑ Up</button>
+                    <button class="s7-btn" onclick="(async () => await window.GraceDesktop.fmNewFolder({}))()">New Folder</button>
+                    <button class="s7-btn" onclick="(async () => await window.GraceDesktop.fmDelete({}))()">Delete</button>
                 </div>
                 <div class="s7-fm-pathbar">
                     <span class="s7-fm-path" id="s7-fm-path-{}">/home/user</span>
@@ -327,9 +327,9 @@ impl Desktop {
             r#"
             <div class="s7-notepad" id="s7-notepad-{}">
                 <div class="s7-notepad-toolbar">
-                    <button class="s7-btn" onclick="window.GraceDesktop.notepadOpen({})">Open</button>
-                    <button class="s7-btn" onclick="window.GraceDesktop.notepadSave({})">Save</button>
-                    <button class="s7-btn" onclick="window.GraceDesktop.notepadSaveAs({})">Save As</button>
+                    <button class="s7-btn" onclick="(async () => await window.GraceDesktop.notepadOpen({}))()">Open</button>
+                    <button class="s7-btn" onclick="(async () => await window.GraceDesktop.notepadSave({}))()">Save</button>
+                    <button class="s7-btn" onclick="(async () => await window.GraceDesktop.notepadSaveAs({}))()">Save As</button>
                     <span class="s7-notepad-path" id="s7-notepad-path-{}"></span>
                 </div>
                 <textarea class="s7-notepad-text" id="s7-notepad-text-{}" spellcheck="false"></textarea>

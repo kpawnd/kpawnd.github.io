@@ -172,7 +172,7 @@ impl ServiceManager {
         self.services.get(name).map(|s| s.state)
     }
 
-    pub fn auto_start_services(&mut self, spawn_pid_fn: &mut dyn FnMut(&str) -> u32) {
+    pub fn auto_start_services(&mut self, spawn_pid_fn: &mut dyn FnMut(&str) -> Option<u32>) {
         let auto_start_services: Vec<String> = self
             .services
             .values()
@@ -191,7 +191,7 @@ impl ServiceManager {
     fn start_service_recursive(
         &mut self,
         name: &str,
-        spawn_pid_fn: &mut dyn FnMut(&str) -> u32,
+        spawn_pid_fn: &mut dyn FnMut(&str) -> Option<u32>,
     ) -> Result<(), String> {
         if let Some(service) = self.services.get(name) {
             if service.state == ServiceState::Running {
@@ -205,7 +205,7 @@ impl ServiceManager {
             }
         }
 
-        let pid = spawn_pid_fn(name);
+        let pid = spawn_pid_fn(name).ok_or("Failed to spawn process: out of memory")?;
         self.start(name, pid)
     }
 }

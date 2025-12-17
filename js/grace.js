@@ -1,5 +1,6 @@
 import { getState } from './state.js';
 import { handleCommand as terminalHandleCommand } from './terminal.js';
+import { escapeHtml } from './dom.js';
 
 (function(){
   const d = document;
@@ -7,6 +8,48 @@ import { handleCommand as terminalHandleCommand } from './terminal.js';
   let windowZ = 100;
   let activeWindow = null;
   let startMenuOpen = false;
+
+  const STATE_FILE = '/home/user/.grace_desktop_state';
+  function exportDesktopState() {
+    // Save icon positions and open windows (minimal example)
+    const icons = Array.from(document.querySelectorAll('.grace-desktop-icon')).map(ic => ({
+      name: ic.querySelector('.grace-icon-label')?.textContent,
+      x: parseInt(ic.style.left, 10) || 0,
+      y: parseInt(ic.style.top, 10) || 0
+    }));
+    // Optionally, add open windows, settings, etc.
+    return JSON.stringify({ icons });
+  }
+  function importDesktopState(state) {
+    if (!state) return;
+    try {
+      const obj = JSON.parse(state);
+      if (obj.icons && Array.isArray(obj.icons)) {
+        // Remove existing icons
+        document.querySelectorAll('.grace-desktop-icon').forEach(ic => ic.remove());
+        // Recreate icons
+        obj.icons.forEach(icon => {
+          // Only restore known apps for now
+          if (icon.name === 'Terminal') createDesktopIcon('Terminal', icons.terminal, icon.x, icon.y, openTerminal);
+          if (icon.name === 'Files') createDesktopIcon('Files', icons.files, icon.x, icon.y, openFileManager);
+          if (icon.name === 'Notepad') createDesktopIcon('Notepad', icons.notepad, icon.x, icon.y, () => openNotepad());
+        });
+      }
+    } catch (e) { /* ignore */ }
+  }
+  function saveDesktopState() {
+    try {
+      const system = getState().system;
+      system.fs_write(STATE_FILE, exportDesktopState());
+    } catch (e) { /* ignore */ }
+  }
+  function loadDesktopState() {
+    try {
+      const system = getState().system;
+      const state = system.fs_read(STATE_FILE);
+      if (state) importDesktopState(state);
+    } catch (e) { /* ignore */ }
+  }
 
   // minimal geometry icons
   const icons = {
@@ -36,6 +79,24 @@ import { handleCommand as terminalHandleCommand } from './terminal.js';
     ic.style.left = x + 'px';
     ic.style.top = y + 'px';
     ic.ondblclick = action;
+    // Save state on drag end
+    let dragging = false, dx = 0, dy = 0;
+    ic.onmousedown = (e) => {
+      dragging = true;
+      dx = e.clientX - ic.offsetLeft;
+      dy = e.clientY - ic.offsetTop;
+      document.body.style.userSelect = 'none';
+    };
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      ic.style.left = (e.clientX - dx) + 'px';
+      ic.style.top = (e.clientY - dy) + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (dragging) saveDesktopState();
+      dragging = false;
+      document.body.style.userSelect = '';
+    });
   }
 
   function createWindow(title, content, width = 500, height = 350) {
@@ -231,10 +292,58 @@ import { handleCommand as terminalHandleCommand } from './terminal.js';
     listDir(currentPath);
   }
 
-  function openTerminal() {
-    // Open terminal window inside Grace instead of exiting
-    openGraceTerminal();
+  function showGraceDesktopBootSequence(messages, termPrint, outputEl, promptEl, system) {
+    let index = 0;
+    
+    function showNextMessage() {
+      if (index >= messages.length) {
+        // Boot complete - setup terminal like normal boot
+        setTimeout(() => {
+          if (system.post_boot_clear_needed()) {
+            system.acknowledge_post_boot();
+            outputEl.innerHTML = '';
+          }
+          // Setup terminal like normal boot
+          promptEl.textContent = system.prompt();
+        }, 2000);
+        return;
+      }
+
+      const message = messages[index];
+      if (message && message.trim()) {
+        termPrint(message, 'boot');
+      }
+      index++;
+      
+      // Variable timing based on message content
+      let delay = 80; // default
+      if (message.includes('Loading Linux')) {
+        delay = 500;
+      } else if (message.includes('Starting kernel')) {
+        delay = 300;
+      } else if (message.includes('Loading initial ramdisk')) {
+        delay = 200;
+      } else if (message.includes('Command line')) {
+        delay = 150;
+      } else if (message.includes('Linux version')) {
+        delay = 200;
+      } else if (message.includes('CPU features') || message.includes('Memory:')) {
+        delay = 150;
+      } else if (message.includes('Loading kernel module')) {
+        delay = 100;
+      } else if (message.includes('Kernel initialized') || message.includes('Starting init')) {
+        delay = 250;
+      } else if (!message.trim()) {
+        delay = 50; // empty lines faster
+      }
+      setTimeout(showNextMessage, delay);
+    }
+    showNextMessage();
   }
+    function openTerminal() {
+      // Open terminal window inside Grace instead of exiting
+      openGraceTerminal();
+    }
 
   function openGraceTerminal() {
     const { win, body } = createWindow('Terminal', '<div class="grace-terminal"></div>', 720, 480);
@@ -260,10 +369,31 @@ import { handleCommand as terminalHandleCommand } from './terminal.js';
     function termPrint(text, cls = '') {
       const line = document.createElement('div');
       line.className = 'grace-term-line ' + cls;
-      // Handle ANSI color codes for display
+      
       let html = text;
-      html = html.replace(/\x1b\[COLOR:([^\]]+)\]/g, '<span style="color:$1">');
-      html = html.replace(/\x1b\[0m\]/g, '</span>');
+      if (cls.includes('boot')) {
+        // Handle boot status messages like [ OK ] 
+        const escRemoved = text.replace(/\x1b\[[^m]*m/g, '');
+        const m = /^\[\s*(OK|FAILED|ERROR|WARN|WARNING)\s*\]\s*(.*)$/.exec(escRemoved);
+        if (m) {
+          const status = m[1].toUpperCase();
+          const msg = m[2];
+          let statusCls = 'ok';
+          if (status === 'FAILED' || status === 'ERROR') statusCls = 'fail';
+          else if (status === 'WARN' || status === 'WARNING') statusCls = 'warn';
+          const statusHtml = `<span class="boot-status ${statusCls}">[ ${status} ]</span>`;
+          html = `${statusHtml} ${escapeHtml(msg)}`;
+        } else {
+          // Handle ANSI color codes for display
+          html = html.replace(/\x1b\[COLOR:([^\]]+)\]/g, '<span style="color:$1">');
+          html = html.replace(/\x1b\[0m\]/g, '</span>');
+        }
+      } else {
+        // Handle ANSI color codes for display
+        html = html.replace(/\x1b\[COLOR:([^\]]+)\]/g, '<span style="color:$1">');
+        html = html.replace(/\x1b\[0m\]/g, '</span>');
+      }
+      
       line.innerHTML = html;
       outputEl.appendChild(line);
       outputEl.scrollTop = outputEl.scrollHeight;
@@ -307,6 +437,11 @@ import { handleCommand as terminalHandleCommand } from './terminal.js';
         termPrint('Doom: Use fullscreen terminal for games', 'grace-term-info');
       } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
         termPrint('Grace desktop is already running', 'grace-term-info');
+      } else if (result.startsWith('\x1b[BOOT_SEQUENCE:')) {
+        // Handle boot sequence animation for Grace Desktop terminals
+        const messagesStr = result.slice(15, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
+        const messages = messagesStr.split('|');
+        showGraceDesktopBootSequence(messages, termPrint, outputEl, promptEl, system);
       } else if (result.startsWith('\x1b[NANO:')) {
         const content = result.slice(7, -1);
         const colonIdx = content.indexOf(':');
@@ -478,10 +613,37 @@ import { handleCommand as terminalHandleCommand } from './terminal.js';
     // Window area
     windowArea = el('div', 'grace-window-area', container);
 
-    // Desktop icons
+    // Desktop icons (will be restored from state if present)
     createDesktopIcon('Terminal', icons.terminal, 30, 30, openTerminal);
     createDesktopIcon('Files', icons.files, 30, 120, openFileManager);
-    createDesktopIcon('Notepad', icons.notepad, 30, 210, () => openNotepad());
+    createDesktopIcon('Notepad', icons.notepad, 30, 210, () => {
+      // Prompt for file to open, default to readme.txt
+      const system = getState().system;
+      let path = prompt('Open file (leave blank for new)', '/home/user/readme.txt');
+      if (!path) return openNotepad('', '');
+      const content = system.exec(`cat ${path}`);
+      if (/No such file|Is a directory/.test(content)) {
+        alert(`Cannot open: ${content}`);
+        openNotepad(path, '');
+      } else {
+        openNotepad(path, content);
+      }
+    });
+    // Add Neofetch desktop icon
+    createDesktopIcon('Neofetch', icons.info, 30, 300, openNeofetchDesktop);
+
+  async function openNeofetchDesktop() {
+    // Use the same Rust/WASM neofetch_logo as the terminal
+    const { neofetch_logo } = await import('../pkg/terminal_os.js');
+    const system = getState().system;
+    const osName = system.exec('uname -n') || 'kpawnd';
+    const logo = neofetch_logo(osName);
+    const { body } = createWindow('Neofetch', '<pre class="grace-neofetch"></pre>', 520, 340);
+    body.querySelector('pre').textContent = logo;
+  }
+
+    // Restore desktop state (icon positions, etc.)
+    setTimeout(loadDesktopState, 0);
 
     // Panel (taskbar)
     panel = el('div', 'grace-panel', container);
@@ -544,6 +706,13 @@ import { handleCommand as terminalHandleCommand } from './terminal.js';
   function launch() {
     if (!container) init();
     container.style.display = 'block';
+  }
+
+  // Save state on exit to terminal
+  function exitToTerminal() {
+    saveDesktopState();
+    container.style.display = 'none';
+    d.dispatchEvent(new CustomEvent('GRACE:OPEN_TERMINAL'));
   }
 
   window.GraceDesktop = { launch };

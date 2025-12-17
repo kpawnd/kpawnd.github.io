@@ -35,6 +35,59 @@ export function initTerminal(wasm) {
   mp_disconnect_fn = wasm.mp_disconnect;
 }
 
+function showGraceBootSequence(messages) {
+  let index = 0;
+  
+  function showNextMessage() {
+    if (index >= messages.length) {
+      // Boot complete - setup terminal like normal boot
+      setTimeout(() => {
+        if (getState().system.post_boot_clear_needed()) {
+          getState().system.acknowledge_post_boot();
+          document.getElementById('output').innerHTML = '';
+        }
+        // Setup terminal like normal boot
+        const promptEl = document.getElementById('prompt');
+        if (promptEl) promptEl.textContent = getState().system.prompt();
+      }, 2000);
+      return;
+    }
+
+    const message = messages[index];
+    if (message && message.trim()) {
+      print(message, 'boot');
+      scrollToBottom();
+    }
+    index++;
+    
+    // Variable timing based on message content
+    let delay = 80; // default
+    if (message.includes('Loading Linux')) {
+      delay = 500;
+    } else if (message.includes('Starting kernel')) {
+      delay = 300;
+    } else if (message.includes('Loading initial ramdisk')) {
+      delay = 200;
+    } else if (message.includes('Command line')) {
+      delay = 150;
+    } else if (message.includes('Linux version')) {
+      delay = 200;
+    } else if (message.includes('CPU features') || message.includes('Memory:')) {
+      delay = 150;
+    } else if (message.includes('Loading kernel module')) {
+      delay = 100;
+    } else if (message.includes('Kernel initialized') || message.includes('Starting init')) {
+      delay = 250;
+    } else if (!message.trim()) {
+      delay = 50; // empty lines faster
+    }
+    
+    setTimeout(showNextMessage, delay);
+  }
+
+  showNextMessage();
+}
+
 export function setupTerminal() {
   const state = getState();
   if (state.terminalSetup) return;
@@ -248,6 +301,11 @@ export async function handleCommand(cmd) {
     start_doom();
   } else if (result.startsWith('\x1b[LAUNCH_SCREENSAVER]')) {
     start_screensaver();
+  } else if (result.startsWith('\x1b[BOOT_SEQUENCE:')) {
+    // Handle boot sequence animation for Grace Desktop terminals
+    const messagesStr = result.slice(15, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
+    const messages = messagesStr.split('|');
+    showGraceBootSequence(messages);
   } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
     try {
       // Use the Rust-based Desktop now
