@@ -296,7 +296,7 @@ impl Triangle {
         let t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / denom;
         let u = -((a.x - c.x) * (b.y - a.y) - (a.y - c.y) * (b.x - a.x)) / denom;
 
-        t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0
+        (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
     }
 
     #[inline(always)]

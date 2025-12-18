@@ -525,7 +525,7 @@ impl DoomGame {
         }
 
         // Calculate detailed FPS statistics every 60 frames
-        if self.frame_times.len() >= 60 && self.frame_times.len() % 10 == 0 {
+        if self.frame_times.len() >= 60 && self.frame_times.len().is_multiple_of(10) {
             self.calculate_fps_stats();
         }
 
@@ -968,7 +968,7 @@ impl DoomGame {
             .collect();
     }
 
-    fn render_fps_display(&self, gfx: &mut Renderer, w: u32, h: u32) {
+    fn render_fps_display(&self, gfx: &mut Renderer, w: u32, _h: u32) {
         let fps_x = w.saturating_sub(140);
         let fps_y = 20;
 
@@ -1012,8 +1012,7 @@ impl DoomGame {
                 let frame_time = self.fps_stats.frame_time_history[i];
                 let normalized = ((frame_time - min_frame_time)
                     / (max_frame_time - min_frame_time))
-                    .max(0.0)
-                    .min(1.0);
+                    .clamp(0.0, 1.0);
                 let y_pos = (normalized * (graph_height - 1) as f64) as u32;
 
                 // Color based on performance (green = good, red = bad)
@@ -2129,6 +2128,7 @@ fn install_mouse_look(canvas: &HtmlCanvasElement) {
     click_cb.forget();
 }
 
+#[allow(dead_code)]
 fn request_pointer_lock(canvas: &HtmlCanvasElement) {
     canvas.request_pointer_lock();
 }

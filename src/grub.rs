@@ -512,10 +512,9 @@ impl Memtest {
 
             // Verify
             for i in (0..self.test_memory.len()).step_by(4) {
-                if i + 4 <= self.test_memory.len() {
-                    if self.test_memory[i..i + 4] != pattern_bytes {
-                        self.errors += 1;
-                    }
+                if i + 4 <= self.test_memory.len()
+                    && self.test_memory[i..i + 4] != pattern_bytes {
+                    self.errors += 1;
                 }
             }
         }
@@ -555,10 +554,9 @@ impl Memtest {
 
             // Verify
             for i in 0..self.test_memory.len() {
-                if i % 20 == 0 {
-                    if self.test_memory[i] != pattern {
-                        self.errors += 1;
-                    }
+                if i % 20 == 0
+                    && self.test_memory[i] != pattern {
+                    self.errors += 1;
                 }
             }
         }
