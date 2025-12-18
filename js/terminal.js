@@ -15,11 +15,6 @@ let start_doom;
 let start_doom_with_difficulty;
 let doom_enable_procedural;
 let doom_restore_original_map;
-let mp_host_fn;
-let mp_join_fn;
-let mp_finalize_fn;
-let mp_id_fn;
-let mp_disconnect_fn;
 let start_screensaver;
 
 export function initTerminal(wasm) {
@@ -28,28 +23,21 @@ export function initTerminal(wasm) {
   start_screensaver = wasm.start_screensaver;
   doom_enable_procedural = wasm.doom_enable_procedural;
   doom_restore_original_map = wasm.doom_restore_original_map;
-  mp_host_fn = wasm.mp_host;
-  mp_join_fn = wasm.mp_join;
-  mp_finalize_fn = wasm.mp_finalize;
-  mp_id_fn = wasm.mp_id;
-  mp_disconnect_fn = wasm.mp_disconnect;
 }
 
 function showGraceBootSequence(messages) {
+  // Clear screen before showing boot sequence
+  document.getElementById('output').innerHTML = '';
+
   let index = 0;
   
   function showNextMessage() {
     if (index >= messages.length) {
-      // Boot complete - setup terminal like normal boot
-      setTimeout(() => {
-        if (getState().system.post_boot_clear_needed()) {
-          getState().system.acknowledge_post_boot();
-          document.getElementById('output').innerHTML = '';
-        }
-        // Setup terminal like normal boot
-        const promptEl = document.getElementById('prompt');
-        if (promptEl) promptEl.textContent = getState().system.prompt();
-      }, 2000);
+      // Boot complete - clear screen immediately and setup terminal
+      document.getElementById('output').innerHTML = '';
+      // Setup terminal like normal boot
+      const promptEl = document.getElementById('prompt');
+      if (promptEl) promptEl.textContent = getState().system.prompt();
       return;
     }
 
@@ -288,8 +276,8 @@ export async function handleCommand(cmd) {
     } else {
       print('Restore map API not available.', 'error');
     }
-  } else if (result.startsWith('\x1b[LAUNCH_DOOM')) {
-    // Matches \x1b[LAUNCH_DOOM] or \x1b[LAUNCH_DOOM:<n>] even if additional text follows
+  } else if (result === '\x1b[LAUNCH_DOOM]' || result.startsWith('\x1b[LAUNCH_DOOM:')) {
+    // Handle DOOM launch
     const match = /\x1b\[LAUNCH_DOOM(?::(\d))?\]/.exec(result);
     if (match && match[1]) {
       const diff = parseInt(match[1], 10);
@@ -303,9 +291,12 @@ export async function handleCommand(cmd) {
     start_screensaver();
   } else if (result.startsWith('\x1b[BOOT_SEQUENCE:')) {
     // Handle boot sequence animation for Grace Desktop terminals
-    const messagesStr = result.slice(15, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
+    const messagesStr = result.slice(16, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
     const messages = messagesStr.split('|');
     showGraceBootSequence(messages);
+  } else if (result === '\x1b[LAUNCH_GRUB]') {
+    // Show GRUB menu
+    import('./grub.js').then(module => module.showGrub());
   } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
     try {
       // Use the Rust-based Desktop now
@@ -327,50 +318,8 @@ export async function handleCommand(cmd) {
     } catch (e) {
       print(`Failed to launch Grace: ${e}`, 'error');
     }
-  } else if (result.startsWith('\x1b[MP_HOST]')) {
-    (async () => {
-      try {
-        if (typeof mp_host_fn !== 'function') { throw new Error('mp_host not available'); }
-        const code = await mp_host_fn();
-        print(`Room code (share this): ${code}`, 'info');
-      } catch (e) {
-        print(`Failed to host: ${e}`, 'error');
-      }
-    })();
-  } else if (result.startsWith('\x1b[MP_JOIN:')) {
-    const code = result.slice(10, -1);
-    (async () => {
-      try {
-        if (typeof mp_join_fn !== 'function') { throw new Error('mp_join not available'); }
-        const answer = await mp_join_fn(code);
-        print(`Answer code (send back to host): ${answer}`, 'info');
-      } catch (e) {
-        print(`Join failed: ${e}`, 'error');
-      }
-    })();
-  } else if (result.startsWith('\x1b[MP_FINALIZE:')) {
-    const answer = result.slice(15, -1);
-    (async () => {
-      try {
-        if (typeof mp_finalize_fn !== 'function') { throw new Error('mp_finalize not available'); }
-        await mp_finalize_fn(answer);
-        print('Connection established.', 'info');
-      } catch (e) {
-        print(`Finalize failed: ${e}`, 'error');
-      }
-    })();
-  } else if (result.startsWith('\x1b[MP_ID]')) {
-    if (typeof mp_id_fn === 'function') {
-      print(`Peer ID: ${mp_id_fn()}`, 'info');
-    } else {
-      print('Peer ID not available', 'error');
-    }
-  } else if (result.startsWith('\x1b[MP_DISCONNECT]')) {
-    if (typeof mp_disconnect_fn === 'function') {
-      mp_disconnect_fn();
-    }
-    print('Disconnected.', 'info');
-  } else if (result.startsWith('\x1b[FETCH:')) {
+  }
+  if (result.startsWith('\x1b[FETCH:')) {
     await fetchUrl(result.slice(8, -1));
   } else if (result.startsWith('\x1b[CURL:')) {
     const parts = result.slice(7, -1).split(':');
@@ -399,28 +348,13 @@ export async function handleCommand(cmd) {
       window.dispatchEvent(new CustomEvent('KP_REBOOT'));
     }, 500);
   } else if (result && result.trim()) {
-    // If simulated shell doesn't recognize the command, try OS fallback
-    if (result.startsWith('sh:') && result.endsWith('command not found')) {
-      const trimmedCmd = cmd.trim();
-      // Do NOT fallback for sudo/reboot — keep it in simulated OS
-      if (trimmedCmd.startsWith('sudo ') || trimmedCmd === 'reboot') {
-        print(result, 'error');
-        return;
-      }
-      try {
-        const resp = await fetch('/exec', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cmd })
-        });
-        const data = await resp.json();
-        const out = `${data.stdout || ''}${data.stderr || ''}`.trim();
-        print(out || '(no output)', 'output');
-      } catch (e) {
-        print(`exec error: ${e.message}`, 'error');
-      }
-    } else {
-      print(result, 'output');
+    // Handle command output - clean up any remaining escape sequences
+    const clean = result
+      .replace(/\x1b\[COLOR:[^\]]*\]/g, '')  // \x1b[COLOR:blue], \x1b[COLOR:reset], etc.
+      .replace(/\x1b\[[0-9;]*m/g, '')    // Standard ANSI escapes
+      .replace(/\x1b\[[A-Z_]+[^\]]*\]/g, ''); // Other escape sequences like \x1b[SOMETHING]
+    if (clean.trim()) {
+      print(clean, 'output');
     }
   }
 

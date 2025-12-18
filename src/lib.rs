@@ -23,7 +23,7 @@ pub mod vfs;
 pub mod vfs_persist;
 
 pub use desktop::Desktop;
-pub use doom::{memory_usage, start_doom, stop_doom};
+pub use doom::{memory_usage, start_doom, start_doom_with_difficulty, stop_doom};
 pub use graphics::{Graphics, MatrixScreensaver, SnakeGame};
 #[cfg(feature = "webgl")]
 pub use graphics_gl::WebGlGraphics;

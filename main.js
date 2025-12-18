@@ -10,11 +10,6 @@ import init, {
   start_screensaver,
   doom_enable_procedural,
   doom_restore_original_map,
-  mp_host,
-  mp_join,
-  mp_finalize,
-  mp_id,
-  mp_disconnect,
   fetch_http,
   curl_request,
   ping_request,
@@ -402,6 +397,9 @@ function setupGraceDesktopBridge() {
       } else if (result.startsWith('\x1b[LAUNCH_DOOM') || result.startsWith('\x1b[SCREENSAVER]')) {
         window.GraceDesktop.printTerminal(windowId, 'This command requires fullscreen terminal mode.', 's7-term-warn');
         window.GraceDesktop.printTerminal(windowId, 'Type "exit" to leave desktop, then run the command.', 's7-term-info');
+      } else if (result === '\x1b[LAUNCH_GRUB]') {
+        // Show GRUB menu
+        import('./js/grub.js').then(module => module.showGrub());
       } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
         window.GraceDesktop.printTerminal(windowId, 'Grace is already running', 's7-term-info');
       } else if (result.startsWith('\x1b[NANO:')) {
@@ -411,7 +409,7 @@ function setupGraceDesktopBridge() {
         Desktop.open_notepad();
       } else if (result.startsWith('\x1b[BOOT_SEQUENCE:')) {
         // Handle boot sequence animation
-        const messagesStr = result.slice(15, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
+        const messagesStr = result.slice(16, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
         const messages = messagesStr.split('|');
         showBootSequence(messages);
       } else if (result === '\x1b[REBOOT]') {
@@ -720,22 +718,20 @@ function showBootSequence(messages) {
   const terminal = document.getElementById('terminal');
   const output = document.getElementById('output');
 
+  // Clear screen before showing boot sequence
+  output.innerHTML = '';
+
   // Boot happens with GRUB visible, terminal hidden
 
   function showNextMessage() {
     if (index >= messages.length) {
-      // Boot complete - hide GRUB and show terminal
-      setTimeout(() => {
-        document.getElementById('grub').style.display = 'none';
-        terminal.style.display = 'flex';
-        if (getSystem().post_boot_clear_needed()) {
-          getSystem().acknowledge_post_boot();
-          output.innerHTML = '';
-        }
-        // Setup terminal like normal boot
-        const promptEl = document.getElementById('prompt');
-        if (promptEl) promptEl.textContent = getSystem().prompt();
-      }, 2000);
+      // Boot complete - clear screen immediately and setup terminal
+      document.getElementById('grub').style.display = 'none';
+      terminal.style.display = 'flex';
+      output.innerHTML = '';
+      // Setup terminal like normal boot
+      const promptEl = document.getElementById('prompt');
+      if (promptEl) promptEl.textContent = getSystem().prompt();
       return;
     }
 
@@ -763,12 +759,7 @@ async function main() {
       start_doom_with_difficulty, 
       start_screensaver, 
       doom_enable_procedural, 
-      doom_restore_original_map,
-      mp_host,
-      mp_join,
-      mp_finalize,
-      mp_id,
-      mp_disconnect
+      doom_restore_original_map
     });
     initNetwork({ fetch_http, curl_request, ping_request, dns_lookup, get_public_ip });
     // Multiplayer handled fully in Rust now; use console to connect:

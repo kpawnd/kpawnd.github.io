@@ -294,18 +294,16 @@ import { escapeHtml } from './dom.js';
 
   function showGraceDesktopBootSequence(messages, termPrint, outputEl, promptEl, system) {
     let index = 0;
+
+    // Clear screen before showing boot sequence
+    outputEl.innerHTML = '';
     
     function showNextMessage() {
       if (index >= messages.length) {
-        // Boot complete - setup terminal like normal boot
-        setTimeout(() => {
-          if (system.post_boot_clear_needed()) {
-            system.acknowledge_post_boot();
-            outputEl.innerHTML = '';
-          }
-          // Setup terminal like normal boot
-          promptEl.textContent = system.prompt();
-        }, 2000);
+        // Boot complete - clear screen immediately and setup terminal
+        outputEl.innerHTML = '';
+        // Setup terminal like normal boot
+        promptEl.textContent = system.prompt();
         return;
       }
 
@@ -435,11 +433,14 @@ import { escapeHtml } from './dom.js';
         termPrint('Type "exit()" to exit', 'grace-term-info');
       } else if (result.startsWith('\x1b[LAUNCH_DOOM')) {
         termPrint('Doom: Use fullscreen terminal for games', 'grace-term-info');
+      } else if (result === '\x1b[LAUNCH_GRUB]') {
+        // Show GRUB menu
+        import('./grub.js').then(module => module.showGrub());
       } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
         termPrint('Grace desktop is already running', 'grace-term-info');
       } else if (result.startsWith('\x1b[BOOT_SEQUENCE:')) {
         // Handle boot sequence animation for Grace Desktop terminals
-        const messagesStr = result.slice(15, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
+        const messagesStr = result.slice(16, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
         const messages = messagesStr.split('|');
         showGraceDesktopBootSequence(messages, termPrint, outputEl, promptEl, system);
       } else if (result.startsWith('\x1b[NANO:')) {

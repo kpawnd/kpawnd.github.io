@@ -198,6 +198,7 @@ impl Circle {
         let closest_x = self.center.x.max(aabb.min.x).min(aabb.max.x);
         let closest_y = self.center.y.max(aabb.min.y).min(aabb.max.y);
         let closest = Vec2::new(closest_x, closest_y);
+
         self.center.distance_squared_to(&closest) <= self.radius * self.radius
     }
 
@@ -209,6 +210,341 @@ impl Circle {
     #[inline(always)]
     pub fn to_aabb(&self) -> AABB {
         AABB::from_center_size(self.center, self.radius, self.radius)
+    }
+}
+
+/// Triangle collider for complex shapes
+#[derive(Clone, Copy, Debug)]
+pub struct Triangle {
+    pub a: Vec2,
+    pub b: Vec2,
+    pub c: Vec2,
+}
+
+impl Triangle {
+    #[inline(always)]
+    pub fn new(a: Vec2, b: Vec2, c: Vec2) -> Self {
+        Self { a, b, c }
+    }
+
+    /// Check if point is inside triangle using barycentric coordinates
+    #[inline(always)]
+    pub fn contains_point(&self, point: &Vec2) -> bool {
+        let v0 = self.c.sub(&self.a);
+        let v1 = self.b.sub(&self.a);
+        let v2 = point.sub(&self.a);
+
+        let dot00 = v0.dot(&v0);
+        let dot01 = v0.dot(&v1);
+        let dot02 = v0.dot(&v2);
+        let dot11 = v1.dot(&v1);
+        let dot12 = v1.dot(&v2);
+
+        let inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
+        let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
+        let v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
+
+        u >= 0.0 && v >= 0.0 && (u + v) <= 1.0
+    }
+
+    #[inline(always)]
+    pub fn intersects_aabb(&self, aabb: &AABB) -> bool {
+        // Check if any triangle vertex is inside AABB
+        if aabb.contains_point(&self.a) || aabb.contains_point(&self.b) || aabb.contains_point(&self.c) {
+            return true;
+        }
+
+        // Check if any AABB edge intersects triangle edges
+        let aabb_corners = [
+            Vec2::new(aabb.min.x, aabb.min.y),
+            Vec2::new(aabb.max.x, aabb.min.y),
+            Vec2::new(aabb.max.x, aabb.max.y),
+            Vec2::new(aabb.min.x, aabb.max.y),
+        ];
+
+        let triangle_edges = [
+            (self.a, self.b),
+            (self.b, self.c),
+            (self.c, self.a),
+        ];
+
+        let aabb_edges = [
+            (aabb_corners[0], aabb_corners[1]),
+            (aabb_corners[1], aabb_corners[2]),
+            (aabb_corners[2], aabb_corners[3]),
+            (aabb_corners[3], aabb_corners[0]),
+        ];
+
+        for &(p1, p2) in &triangle_edges {
+            for &(p3, p4) in &aabb_edges {
+                if Self::lines_intersect(p1, p2, p3, p4) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if two line segments intersect
+    #[inline(always)]
+    fn lines_intersect(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
+        let denom = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x);
+        if denom.abs() < 0.0001 {
+            return false; // Lines are parallel
+        }
+
+        let t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / denom;
+        let u = -((a.x - c.x) * (b.y - a.y) - (a.y - c.y) * (b.x - a.x)) / denom;
+
+        t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0
+    }
+
+    #[inline(always)]
+    pub fn to_aabb(&self) -> AABB {
+        let min_x = self.a.x.min(self.b.x).min(self.c.x);
+        let min_y = self.a.y.min(self.b.y).min(self.c.y);
+        let max_x = self.a.x.max(self.b.x).max(self.c.x);
+        let max_y = self.a.y.max(self.b.y).max(self.c.y);
+
+        AABB::new(min_x, min_y, max_x, max_y)
+    }
+}
+
+/// Convex polygon collider
+#[derive(Clone, Debug)]
+pub struct Polygon {
+    pub vertices: Vec<Vec2>,
+    pub normals: Vec<Vec2>, // Precomputed edge normals for SAT
+}
+
+impl Polygon {
+    pub fn new(vertices: Vec<Vec2>) -> Self {
+        let mut normals = Vec::with_capacity(vertices.len());
+        for i in 0..vertices.len() {
+            let j = (i + 1) % vertices.len();
+            let edge = vertices[j].sub(&vertices[i]);
+            normals.push(edge.perpendicular().normalize());
+        }
+
+        Self { vertices, normals }
+    }
+
+    #[inline(always)]
+    pub fn contains_point(&self, point: &Vec2) -> bool {
+        // Use ray casting algorithm
+        let mut inside = false;
+        let mut j = self.vertices.len() - 1;
+
+        for i in 0..self.vertices.len() {
+            let vi = &self.vertices[i];
+            let vj = &self.vertices[j];
+
+            if ((vi.y > point.y) != (vj.y > point.y)) &&
+               (point.x < (vj.x - vi.x) * (point.y - vi.y) / (vj.y - vi.y) + vi.x) {
+                inside = !inside;
+            }
+            j = i;
+        }
+
+        inside
+    }
+
+    #[inline(always)]
+    pub fn intersects_aabb(&self, aabb: &AABB) -> bool {
+        // SAT collision with AABB
+        self.sat_collision(&Polygon::from_aabb(aabb))
+    }
+
+    /// Separating Axis Theorem collision detection
+    #[inline(always)]
+    pub fn sat_collision(&self, other: &Polygon) -> bool {
+        // Test self normals
+        for normal in &self.normals {
+            if self.is_separating_axis(normal, other) {
+                return false;
+            }
+        }
+
+        // Test other normals
+        for normal in &other.normals {
+            if self.is_separating_axis(normal, other) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    #[inline(always)]
+    fn is_separating_axis(&self, axis: &Vec2, other: &Polygon) -> bool {
+        let self_proj = self.project_onto_axis(axis);
+        let other_proj = other.project_onto_axis(axis);
+
+        self_proj.1 < other_proj.0 || other_proj.1 < self_proj.0
+    }
+
+    #[inline(always)]
+    fn project_onto_axis(&self, axis: &Vec2) -> (f64, f64) {
+        let mut min = self.vertices[0].dot(axis);
+        let mut max = min;
+
+        for vertex in &self.vertices[1..] {
+            let proj = vertex.dot(axis);
+            min = min.min(proj);
+            max = max.max(proj);
+        }
+
+        (min, max)
+    }
+
+    pub fn from_aabb(aabb: &AABB) -> Self {
+        let vertices = vec![
+            Vec2::new(aabb.min.x, aabb.min.y),
+            Vec2::new(aabb.max.x, aabb.min.y),
+            Vec2::new(aabb.max.x, aabb.max.y),
+            Vec2::new(aabb.min.x, aabb.max.y),
+        ];
+        Self::new(vertices)
+    }
+
+    #[inline(always)]
+    pub fn to_aabb(&self) -> AABB {
+        let mut min_x = self.vertices[0].x;
+        let mut min_y = self.vertices[0].y;
+        let mut max_x = self.vertices[0].x;
+        let mut max_y = self.vertices[0].y;
+
+        for vertex in &self.vertices[1..] {
+            min_x = min_x.min(vertex.x);
+            min_y = min_y.min(vertex.y);
+            max_x = max_x.max(vertex.x);
+            max_y = max_y.max(vertex.y);
+        }
+
+        AABB::new(min_x, min_y, max_x, max_y)
+    }
+}
+
+/// Quadtree for efficient spatial queries
+pub struct Quadtree<T> {
+    boundary: AABB,
+    capacity: usize,
+    points: Vec<(Vec2, T)>,
+    divided: bool,
+    northeast: Option<Box<Quadtree<T>>>,
+    northwest: Option<Box<Quadtree<T>>>,
+    southeast: Option<Box<Quadtree<T>>>,
+    southwest: Option<Box<Quadtree<T>>>,
+}
+
+impl<T> Quadtree<T> {
+    pub fn new(boundary: AABB, capacity: usize) -> Self {
+        Self {
+            boundary,
+            capacity,
+            points: Vec::new(),
+            divided: false,
+            northeast: None,
+            northwest: None,
+            southeast: None,
+            southwest: None,
+        }
+    }
+
+    pub fn insert(&mut self, point: Vec2, data: &T) -> bool
+    where
+        T: Clone,
+    {
+        if !self.boundary.contains_point(&point) {
+            return false;
+        }
+
+        if self.points.len() < self.capacity {
+            self.points.push((point, data.clone()));
+            return true;
+        }
+
+        if !self.divided {
+            self.subdivide();
+        }
+
+        if self.northeast.as_mut().unwrap().insert(point, data) {
+            return true;
+        }
+        if self.northwest.as_mut().unwrap().insert(point, data) {
+            return true;
+        }
+        if self.southeast.as_mut().unwrap().insert(point, data) {
+            return true;
+        }
+        if self.southwest.as_mut().unwrap().insert(point, data) {
+            return true;
+        }
+
+        false
+    }
+
+    fn subdivide(&mut self) {
+        let x = self.boundary.center().x;
+        let y = self.boundary.center().y;
+        let w = self.boundary.width() * 0.5;
+        let h = self.boundary.height() * 0.5;
+
+        self.northeast = Some(Box::new(Quadtree::new(
+            AABB::new(x, y, x + w, y + h),
+            self.capacity,
+        )));
+        self.northwest = Some(Box::new(Quadtree::new(
+            AABB::new(x - w, y, x, y + h),
+            self.capacity,
+        )));
+        self.southeast = Some(Box::new(Quadtree::new(
+            AABB::new(x, y - h, x + w, y),
+            self.capacity,
+        )));
+        self.southwest = Some(Box::new(Quadtree::new(
+            AABB::new(x - w, y - h, x, y),
+            self.capacity,
+        )));
+
+        self.divided = true;
+    }
+
+    pub fn query(&self, range: &AABB) -> Vec<&(Vec2, T)> {
+        let mut found = Vec::new();
+        self.query_recursive(range, &mut found);
+        found
+    }
+
+    fn query_recursive<'a>(&'a self, range: &AABB, found: &mut Vec<&'a (Vec2, T)>) {
+        if !self.boundary.intersects(range) {
+            return;
+        }
+
+        for point in &self.points {
+            if range.contains_point(&point.0) {
+                found.push(point);
+            }
+        }
+
+        if self.divided {
+            self.northeast.as_ref().unwrap().query_recursive(range, found);
+            self.northwest.as_ref().unwrap().query_recursive(range, found);
+            self.southeast.as_ref().unwrap().query_recursive(range, found);
+            self.southwest.as_ref().unwrap().query_recursive(range, found);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.points.clear();
+        if self.divided {
+            self.northeast.as_mut().unwrap().clear();
+            self.northwest.as_mut().unwrap().clear();
+            self.southeast.as_mut().unwrap().clear();
+            self.southwest.as_mut().unwrap().clear();
+        }
+        self.divided = false;
     }
 }
 

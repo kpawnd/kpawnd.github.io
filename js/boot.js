@@ -3,6 +3,9 @@ import { print, scrollToBottom, getElement } from './dom.js';
 import { setupTerminal } from './terminal.js';
 
 export function beginBoot() {
+  // Clear screen before booting
+  getElement('output').innerHTML = '';
+
   // Use the new modular boot system
   const bootMessages = state.system.boot_simulate_sequence();
   drainBootLines(bootMessages, 0);

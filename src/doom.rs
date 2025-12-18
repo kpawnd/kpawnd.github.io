@@ -379,6 +379,15 @@ struct Particle {
     max_lifetime: f64,
 }
 
+#[derive(Clone)]
+struct FpsStats {
+    average_fps: f64,
+    min_fps: f64,
+    max_fps: f64,
+    percentile_1_low: f64, // 1% low (worst 1% of frames)
+    frame_time_history: Vec<f64>,
+}
+
 struct DoomGame {
     // Player
     player_body: Body,
@@ -403,6 +412,11 @@ struct DoomGame {
     last_shot_time: f64,
     last_spawn_time: f64,
     game_time: f64,
+    fps: f64,
+    fps_counter: f64,
+    frame_count: u32,
+    frame_times: Vec<f64>, // Store last 300 frame times for statistics
+    fps_stats: FpsStats,
 
     // Day/night cycle (0.0 = midnight, 0.5 = noon, 1.0 = midnight)
     time_of_day: f64,
@@ -426,7 +440,7 @@ impl DoomGame {
         };
 
         let mut player_body = Body::new(16.0, 16.0, 0.3);
-        player_body.friction = 0.3;
+        player_body.friction = 0.1; // Reduced friction for better movement
 
         let mut monsters = Vec::with_capacity(50);
 
@@ -465,6 +479,17 @@ impl DoomGame {
             last_shot_time: 0.0,
             last_spawn_time: 0.0,
             game_time: 0.0,
+            fps: 0.0,
+            fps_counter: 0.0,
+            frame_count: 0,
+            frame_times: Vec::with_capacity(300),
+            fps_stats: FpsStats {
+                average_fps: 0.0,
+                min_fps: 0.0,
+                max_fps: 0.0,
+                percentile_1_low: 0.0,
+                frame_time_history: Vec::new(),
+            },
             time_of_day: 0.25, // Start at dawn
             ammo_pickups: Vec::new(),
             last_ammo_spawn_time: 0.0,
@@ -483,6 +508,26 @@ impl DoomGame {
 
         self.game_time += dt;
 
+        // Update FPS counter with detailed statistics
+        self.frame_times.push(dt);
+        if self.frame_times.len() > 300 { // Keep last 300 frames (~5 seconds at 60fps)
+            self.frame_times.remove(0);
+        }
+
+        // Update simple FPS every second for backward compatibility
+        self.fps_counter += dt;
+        self.frame_count += 1;
+        if self.fps_counter >= 1.0 {
+            self.fps = self.frame_count as f64 / self.fps_counter;
+            self.fps_counter = 0.0;
+            self.frame_count = 0;
+        }
+
+        // Calculate detailed FPS statistics every 60 frames
+        if self.frame_times.len() >= 60 && self.frame_times.len() % 10 == 0 {
+            self.calculate_fps_stats();
+        }
+
         // Day/night cycle (full cycle every 120 seconds)
         self.time_of_day += dt / 120.0;
         if self.time_of_day > 1.0 {
@@ -496,7 +541,7 @@ impl DoomGame {
         }
 
         // Player movement with physics
-        let move_force = 15.0;
+        let move_force = 20.0; // Reduced for better control
         let mut force = Vec2::zero();
 
         KEYS.with(|k| {
@@ -519,10 +564,10 @@ impl DoomGame {
                 force = force.add(&right.scale(strafe_force));
             }
             if keys[37] {
-                self.rotate(0.05);
+                self.rotate(0.08); // Left arrow - turn left
             }
             if keys[39] {
-                self.rotate(-0.05);
+                self.rotate(-0.08); // Right arrow - turn right
             }
             if keys[49] {
                 self.current_weapon = 0;
@@ -572,15 +617,6 @@ impl DoomGame {
             // roughly every second
             self.ammo += 1;
         }
-
-        // Mouse look
-        MOUSE_DELTA_X.with(|md| {
-            let dx = md.get();
-            if dx.abs() > 0.01 {
-                self.rotate(-dx * 0.003);
-            }
-            md.set(0.0);
-        });
 
         // Shooting
         let shoot = KEYS.with(|k| k.borrow()[32])
@@ -746,7 +782,7 @@ impl DoomGame {
             for monster in self.monsters.iter_mut() {
                 if monster.state != MonsterState::Dead {
                     let dist = proj_pos.distance_to(&monster.body.position);
-                    if dist < 0.5 {
+                    if dist < 0.8 { // Increased collision radius
                         monster.health -= damage;
                         if monster.health <= 0 {
                             monster.state = MonsterState::Dead;
@@ -898,6 +934,82 @@ impl DoomGame {
     fn rotate(&mut self, angle: f64) {
         self.dir = self.dir.rotate(angle);
         self.plane = self.plane.rotate(angle);
+    }
+
+    fn calculate_fps_stats(&mut self) {
+        if self.frame_times.is_empty() {
+            return;
+        }
+
+        // Calculate FPS from frame times (FPS = 1/frame_time)
+        let mut fps_values: Vec<f64> = self.frame_times.iter().map(|&ft| 1.0 / ft).collect();
+        fps_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let len = fps_values.len();
+        self.fps_stats.average_fps = fps_values.iter().sum::<f64>() / len as f64;
+        self.fps_stats.min_fps = *fps_values.first().unwrap_or(&0.0);
+        self.fps_stats.max_fps = *fps_values.last().unwrap_or(&0.0);
+
+        // Calculate 1% low (the lowest 1% of frames)
+        let percentile_1_index = (len as f64 * 0.01).max(0.0) as usize;
+        self.fps_stats.percentile_1_low = fps_values.get(percentile_1_index).copied().unwrap_or(0.0);
+
+        // Store frame time history for graph (keep last 60 values)
+        self.fps_stats.frame_time_history = self.frame_times.iter().rev().take(60).rev().cloned().collect();
+    }
+
+    fn render_fps_display(&self, gfx: &mut Renderer, w: u32, h: u32) {
+        let fps_x = w.saturating_sub(140);
+        let fps_y = 20;
+
+        // Main FPS display - use the 1-second rolling average for current performance
+        let fps_str = format!("FPS:{:.0}", self.fps);
+        self.draw_text(gfx, &fps_str.to_uppercase(), fps_x, fps_y, (255, 255, 0));
+
+        // Statistics
+        let avg_str = format!("AVG:{:.0}", self.fps_stats.average_fps);
+        self.draw_text(gfx, &avg_str, fps_x, fps_y + 12, (200, 200, 255));
+
+        let min_str = format!("MIN:{:.0}", self.fps_stats.min_fps);
+        self.draw_text(gfx, &min_str, fps_x, fps_y + 24, (255, 100, 100));
+
+        let low_str = format!("1%:{:.0}", self.fps_stats.percentile_1_low);
+        self.draw_text(gfx, &low_str, fps_x, fps_y + 36, (255, 150, 100));
+
+        let max_str = format!("MAX:{:.0}", self.fps_stats.max_fps);
+        self.draw_text(gfx, &max_str, fps_x, fps_y + 48, (100, 255, 100));
+
+        // Mini FPS graph (last 60 frames) - positioned below all the text stats
+        if !self.fps_stats.frame_time_history.is_empty() {
+            let graph_x = fps_x;
+            let graph_y = fps_y + 65; // Position below all text statistics
+            let graph_width = 80;
+            let graph_height = 30;
+
+            // Draw graph background
+            gfx.draw_rect(graph_x, graph_y, graph_width, graph_height, 20, 20, 20);
+
+            // Draw FPS graph line
+            let max_frame_time = 1.0 / 30.0; // 30 FPS minimum
+            let min_frame_time = 1.0 / 120.0; // 120 FPS maximum
+
+            for i in 0..self.fps_stats.frame_time_history.len().min(graph_width as usize) {
+                let frame_time = self.fps_stats.frame_time_history[i];
+                let normalized = ((frame_time - min_frame_time) / (max_frame_time - min_frame_time)).max(0.0).min(1.0);
+                let y_pos = (normalized * (graph_height - 1) as f64) as u32;
+
+                // Color based on performance (green = good, red = bad)
+                let (r, g, b) = if frame_time < 1.0/60.0 {
+                    (100, 255, 100) // Good (60+ FPS)
+                } else if frame_time < 1.0/30.0 {
+                    (255, 255, 100) // OK (30-60 FPS)
+                } else {
+                    (255, 100, 100) // Bad (<30 FPS)
+                };
+
+                gfx.draw_rect(graph_x + i as u32, graph_y + graph_height - 1 - y_pos, 1, 1, r, g, b);
+            }
+        }
     }
 
     fn render(&self, gfx: &mut Renderer) {
@@ -1284,11 +1396,11 @@ impl DoomGame {
         let w = gfx.width();
         let h = gfx.height();
 
-        // Health bar
+        // Health bar - moved higher for better visibility
         let bar_width = 200u32;
         let bar_height = 20u32;
         let bar_x = 20u32;
-        let bar_y = h - 50;
+        let bar_y = h - 100; // Moved up from h-50
 
         let health_pct = (self.health as f32 / self.max_health as f32).max(0.0);
         let filled = (bar_width as f32 * health_pct) as u32;
@@ -1306,9 +1418,9 @@ impl DoomGame {
             gfx.fill_rect(bar_x, bar_y, filled, bar_height, r, g, 0);
         }
 
-        // Ammo / weapon indicator
+        // Ammo / weapon indicator - moved higher for better visibility
         let ammo_x = w - 140;
-        let ammo_y = h - 55;
+        let ammo_y = h - 105; // Moved up from h-55
         if self.current_weapon == 0 {
             // infinite pistol
             self.draw_text(gfx, "AMMO", ammo_x, ammo_y, (200, 200, 200));
@@ -1342,6 +1454,9 @@ impl DoomGame {
             let mp_str = format!("MP:{}", self.remote_players.len());
             self.draw_text(gfx, &mp_str, diff_x, diff_y + 18, (0, 180, 255));
         }
+
+        // Enhanced FPS counter with statistics and mini graph
+        self.render_fps_display(gfx, w, h);
 
         // Crosshair
         let cx = w / 2;
@@ -1931,20 +2046,46 @@ fn uninstall_resize_listener() {
 }
 
 fn install_mouse_look(canvas: &HtmlCanvasElement) {
-    let move_cb = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(|evt: web_sys::Event| {
-        let movement_x = js_sys::Reflect::get(evt.as_ref(), &JsValue::from_str("movementX"))
-            .ok()
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        if movement_x.abs() > 0.0 {
-            MOUSE_DELTA_X.with(|md| md.set(md.get() + movement_x));
+    // Request pointer lock for proper mouse capture
+    canvas.request_pointer_lock();
+
+    let mouse_move_cb = Closure::<dyn FnMut(web_sys::MouseEvent)>::wrap(Box::new(move |evt: web_sys::MouseEvent| {
+        // Use movement_x for pointer lock (relative movement)
+        let delta_x = evt.movement_x() as f64;
+        if delta_x.abs() > 0.1 {
+            GAME.with(|g| {
+                if let Some(ref mut game) = *g.borrow_mut() {
+                    game.rotate(-delta_x * 0.002); // Pointer lock sensitivity
+                }
+            });
         }
     }));
-    canvas
-        .add_event_listener_with_callback("mousemove", move_cb.as_ref().unchecked_ref())
-        .unwrap();
-    move_cb.forget();
 
+    canvas.add_event_listener_with_callback("mousemove", mouse_move_cb.as_ref().unchecked_ref()).unwrap();
+    mouse_move_cb.forget();
+
+    // Handle pointer lock changes
+    let pointer_lock_change_cb = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |_evt: web_sys::Event| {
+        let doc = document();
+        if doc.pointer_lock_element().is_some() {
+            // Pointer lock is active
+            if let Some(body) = doc.body() {
+                body.style().set_property("cursor", "none").ok();
+            }
+        } else {
+            // Pointer lock lost - request it again
+            if let Some(canvas) = doc.get_element_by_id("game-canvas") {
+                canvas.request_pointer_lock();
+            }
+        }
+    }));
+
+    document()
+        .add_event_listener_with_callback("pointerlockchange", pointer_lock_change_cb.as_ref().unchecked_ref())
+        .unwrap();
+    pointer_lock_change_cb.forget();
+
+    // Set MOUSE_CLICKED on click for shooting
     let click_cb = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(|_evt: web_sys::Event| {
         MOUSE_CLICKED.with(|mc| mc.set(true));
     }));
@@ -1979,7 +2120,7 @@ fn start_loop() {
 
             // Calculate delta time
             let now = js_sys::Date::now();
-            let dt = ((now - last_time) / 1000.0).min(0.05); // Cap at 50ms
+            let dt = (now - last_time) / 1000.0;
             last_time = now;
 
             let should_stop = GAME.with(|g| {
@@ -2075,11 +2216,11 @@ pub fn start_doom_with_difficulty(diff: u8) {
     GFX.with(|gfx| {
         if gfx.borrow().is_none() {
             let w = window().unwrap();
-            let width = (w.inner_width().unwrap().as_f64().unwrap() * 0.95) as u32;
-            let height = (w.inner_height().unwrap().as_f64().unwrap() * 0.90) as u32;
+            let width = (w.inner_width().unwrap().as_f64().unwrap() * 0.80) as u32;
+            let height = (w.inner_height().unwrap().as_f64().unwrap() * 0.70) as u32;
             let canvas = ensure_canvas(width, height).unwrap();
             install_mouse_look(&canvas);
-            request_pointer_lock(&canvas);
+            // Removed pointer lock request for better trackpad compatibility
 
             #[cfg(not(feature = "webgl"))]
             {
@@ -2128,6 +2269,11 @@ pub fn stop_doom() {
     });
     MOUSE_DELTA_X.with(|md| md.set(0.0));
     MOUSE_CLICKED.with(|mc| mc.set(false));
+
+    // Restore cursor visibility when exiting DOOM
+    if let Some(body) = document().body() {
+        body.style().set_property("cursor", "default").ok();
+    }
 
     if let Some(g) = document().get_element_by_id("graphics") {
         g.set_attribute("style", "display:none;").ok();

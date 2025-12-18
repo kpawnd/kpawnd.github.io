@@ -156,7 +156,7 @@ impl System {
         match cmd {
             "reboot" => "\x1b[REBOOT]".into(),
             "echo" => { let out=args.join(" "); if out=="github" { format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap()) } else { out } }
-            "help" => "Available commands:\n\n  File operations:    cat cd chmod chown cp cut diff du file find head ln ls mkdir mv pwd rm rmdir sort tail tee touch tr uniq wc nano vi\n  Text processing:    awk grep sed\n  System info:        df free hostname id man neofetch ps top uname uptime whereis which whoami\n  Network:            arp curl dig host ifconfig ip myip nc netstat nslookup\n                      ping route ss traceroute wget\n  Archives:           tar gzip gunzip zip unzip\n  Package mgmt:       apt apt-get\n  Games:              doom doommap mp\n  Other:              alias clear echo env exit export grub hasgrub help history kill\n                      python screensaver service sudo\n\nType 'man <command>' for more info on a specific command.".into(),
+            "help" => "Available commands:\n\n  File operations:    cat cd chmod chown cp cut diff du file find head ln ls mkdir mv pwd rm rmdir sort tail tee touch tr uniq wc nano vi\n  Text processing:    awk grep sed\n  System info:        df free hostname id man neofetch ps top uname uptime whereis which whoami\n  Network:            arp curl dig host ifconfig ip myip nc netstat nslookup\n                      ping route ss traceroute wget\n  Archives:           tar gzip gunzip zip unzip\n  Package mgmt:       apt apt-get\n  Games:              doom doommap\n  Other:              alias clear echo env exit export grub hasgrub help history kill\n                      python screensaver service sudo\n\nType 'man <command>' for more info on a specific command.".into(),
             "man" => self.cmd_man(args),
             "neofetch" => "\x1b[NEOFETCH_DATA]".to_string(),
             "nano" | "vi" | "vim" => self.cmd_nano(args),
@@ -192,21 +192,6 @@ impl System {
             "grace" => {
                 // Launch the desktop environment named Grace
                 "\x1b[LAUNCH_GRACE]".into()
-            },
-            "mp" => {
-                if args.is_empty() { return "usage: mp <host|join|finalize|id|disconnect>".into(); }
-                match args[0] {
-                    "host" => "\x1b[MP_HOST]".into(),
-                    "join" => {
-                        if args.len()<2 { "usage: mp join <ROOM_CODE>".into() } else { format!("\x1b[MP_JOIN:{}]", args[1]) }
-                    }
-                    "finalize" => {
-                        if args.len()<2 { "usage: mp finalize <ANSWER_CODE>".into() } else { format!("\x1b[MP_FINALIZE:{}]", args[1]) }
-                    }
-                    "id" => "\x1b[MP_ID]".into(),
-                    "disconnect" => "\x1b[MP_DISCONNECT]".into(),
-                    _ => "usage: mp <host|join|finalize|id|disconnect>".into(),
-                }
             },
             "screensaver" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
             "wget" => self.cmd_wget(args),
@@ -289,7 +274,7 @@ impl System {
             "hasgrub" => if self.has_grub() { "yes".into() } else { "no".into() },
             "grub" => {
                 if args.is_empty() {
-                    return "usage: grub <switch|status|boot>".into();
+                    return "\x1b[LAUNCH_GRUB]".into();
                 }
                 match args[0] {
                     "switch" => {
@@ -308,6 +293,7 @@ impl System {
                     }
                     "boot" => {
                         let messages = self.boot.simulate_boot_sequence(&mut self.kernel.mem);
+                        self.booted = true; // Mark system as booted for grub boot
                         format!("\x1b[BOOT_SEQUENCE:{}]", messages.join("|"))
                     }
                     _ => "usage: grub <switch|status|boot>".into(),

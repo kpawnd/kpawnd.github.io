@@ -339,6 +339,103 @@ impl FrameBuffer {
             }
         }
     }
+
+    /// Draw a filled circle using midpoint circle algorithm
+    pub fn fill_circle(&mut self, cx: u32, cy: u32, radius: u32, color: &Color) {
+        if radius == 0 {
+            return;
+        }
+
+        let r = radius as i32;
+        let mut x = 0;
+        let mut y = r;
+        let mut d = 3 - 2 * r;
+
+        while y >= x {
+            // Draw horizontal lines to fill the circle
+            let y_pos = cy as i32 + y;
+            let y_neg = cy as i32 - y;
+            let y_pos2 = cy as i32 + x;
+            let y_neg2 = cy as i32 - x;
+
+            let x_left = (cx as i32 - x).max(0) as u32;
+            let x_right = (cx as i32 + x).min(self.width as i32 - 1) as u32;
+
+            // Fill the horizontal spans
+            if y_pos >= 0 && y_pos < self.height as i32 {
+                self.draw_hline(x_left, x_right, y_pos as u32, color.r, color.g, color.b);
+            }
+            if y_neg >= 0 && y_neg < self.height as i32 {
+                self.draw_hline(x_left, x_right, y_neg as u32, color.r, color.g, color.b);
+            }
+
+            if x != y {
+                let x_left2 = (cx as i32 - y).max(0) as u32;
+                let x_right2 = (cx as i32 + y).min(self.width as i32 - 1) as u32;
+
+                if y_pos2 >= 0 && y_pos2 < self.height as i32 {
+                    self.draw_hline(x_left2, x_right2, y_pos2 as u32, color.r, color.g, color.b);
+                }
+                if y_neg2 >= 0 && y_neg2 < self.height as i32 {
+                    self.draw_hline(x_left2, x_right2, y_neg2 as u32, color.r, color.g, color.b);
+                }
+            }
+
+            x += 1;
+            if d > 0 {
+                y -= 1;
+                d += 4 * (x - y) + 10;
+            } else {
+                d += 4 * x + 6;
+            }
+        }
+    }
+
+    /// Draw a triangle (outline)
+    pub fn draw_triangle(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, x3: u32, y3: u32, color: &Color) {
+        self.draw_line(x1, y1, x2, y2, color);
+        self.draw_line(x2, y2, x3, y3, color);
+        self.draw_line(x3, y3, x1, y1, color);
+    }
+
+    /// Draw a filled triangle using barycentric coordinates
+    pub fn fill_triangle(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, x3: u32, y3: u32, color: &Color) {
+        // Find bounding box
+        let min_x = x1.min(x2).min(x3);
+        let max_x = x1.max(x2).max(x3);
+        let min_y = y1.min(y2).min(y3);
+        let max_y = y1.max(y2).max(y3);
+
+        // Convert to i32 for calculations
+        let x1 = x1 as i32;
+        let y1 = y1 as i32;
+        let x2 = x2 as i32;
+        let y2 = y2 as i32;
+        let x3 = x3 as i32;
+        let y3 = y3 as i32;
+
+        // Iterate over bounding box
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let x = x as i32;
+                let y = y as i32;
+
+                // Check if point is inside triangle using barycentric coordinates
+                let denom = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3);
+                if denom == 0 {
+                    continue;
+                }
+
+                let a = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) as f64 / denom as f64;
+                let b = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) as f64 / denom as f64;
+                let c = 1.0 - a - b;
+
+                if a >= 0.0 && a <= 1.0 && b >= 0.0 && b <= 1.0 && c >= 0.0 && c <= 1.0 {
+                    self.set_pixel(x as u32, y as u32, color);
+                }
+            }
+        }
+    }
 }
 
 #[wasm_bindgen]

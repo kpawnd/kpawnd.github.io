@@ -2,3 +2,4 @@
 /pkg
 *.backup
 *.py
+/doom/
