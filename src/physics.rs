@@ -250,7 +250,10 @@ impl Triangle {
     #[inline(always)]
     pub fn intersects_aabb(&self, aabb: &AABB) -> bool {
         // Check if any triangle vertex is inside AABB
-        if aabb.contains_point(&self.a) || aabb.contains_point(&self.b) || aabb.contains_point(&self.c) {
+        if aabb.contains_point(&self.a)
+            || aabb.contains_point(&self.b)
+            || aabb.contains_point(&self.c)
+        {
             return true;
         }
 
@@ -262,11 +265,7 @@ impl Triangle {
             Vec2::new(aabb.min.x, aabb.max.y),
         ];
 
-        let triangle_edges = [
-            (self.a, self.b),
-            (self.b, self.c),
-            (self.c, self.a),
-        ];
+        let triangle_edges = [(self.a, self.b), (self.b, self.c), (self.c, self.a)];
 
         let aabb_edges = [
             (aabb_corners[0], aabb_corners[1]),
@@ -340,8 +339,9 @@ impl Polygon {
             let vi = &self.vertices[i];
             let vj = &self.vertices[j];
 
-            if ((vi.y > point.y) != (vj.y > point.y)) &&
-               (point.x < (vj.x - vi.x) * (point.y - vi.y) / (vj.y - vi.y) + vi.x) {
+            if ((vi.y > point.y) != (vj.y > point.y))
+                && (point.x < (vj.x - vi.x) * (point.y - vi.y) / (vj.y - vi.y) + vi.x)
+            {
                 inside = !inside;
             }
             j = i;
@@ -529,10 +529,22 @@ impl<T> Quadtree<T> {
         }
 
         if self.divided {
-            self.northeast.as_ref().unwrap().query_recursive(range, found);
-            self.northwest.as_ref().unwrap().query_recursive(range, found);
-            self.southeast.as_ref().unwrap().query_recursive(range, found);
-            self.southwest.as_ref().unwrap().query_recursive(range, found);
+            self.northeast
+                .as_ref()
+                .unwrap()
+                .query_recursive(range, found);
+            self.northwest
+                .as_ref()
+                .unwrap()
+                .query_recursive(range, found);
+            self.southeast
+                .as_ref()
+                .unwrap()
+                .query_recursive(range, found);
+            self.southwest
+                .as_ref()
+                .unwrap()
+                .query_recursive(range, found);
         }
     }
 

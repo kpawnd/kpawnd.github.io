@@ -510,7 +510,8 @@ impl DoomGame {
 
         // Update FPS counter with detailed statistics
         self.frame_times.push(dt);
-        if self.frame_times.len() > 300 { // Keep last 300 frames (~5 seconds at 60fps)
+        if self.frame_times.len() > 300 {
+            // Keep last 300 frames (~5 seconds at 60fps)
             self.frame_times.remove(0);
         }
 
@@ -782,7 +783,8 @@ impl DoomGame {
             for monster in self.monsters.iter_mut() {
                 if monster.state != MonsterState::Dead {
                     let dist = proj_pos.distance_to(&monster.body.position);
-                    if dist < 0.8 { // Increased collision radius
+                    if dist < 0.8 {
+                        // Increased collision radius
                         monster.health -= damage;
                         if monster.health <= 0 {
                             monster.state = MonsterState::Dead;
@@ -952,10 +954,18 @@ impl DoomGame {
 
         // Calculate 1% low (the lowest 1% of frames)
         let percentile_1_index = (len as f64 * 0.01).max(0.0) as usize;
-        self.fps_stats.percentile_1_low = fps_values.get(percentile_1_index).copied().unwrap_or(0.0);
+        self.fps_stats.percentile_1_low =
+            fps_values.get(percentile_1_index).copied().unwrap_or(0.0);
 
         // Store frame time history for graph (keep last 60 values)
-        self.fps_stats.frame_time_history = self.frame_times.iter().rev().take(60).rev().cloned().collect();
+        self.fps_stats.frame_time_history = self
+            .frame_times
+            .iter()
+            .rev()
+            .take(60)
+            .rev()
+            .cloned()
+            .collect();
     }
 
     fn render_fps_display(&self, gfx: &mut Renderer, w: u32, h: u32) {
@@ -993,21 +1003,37 @@ impl DoomGame {
             let max_frame_time = 1.0 / 30.0; // 30 FPS minimum
             let min_frame_time = 1.0 / 120.0; // 120 FPS maximum
 
-            for i in 0..self.fps_stats.frame_time_history.len().min(graph_width as usize) {
+            for i in 0..self
+                .fps_stats
+                .frame_time_history
+                .len()
+                .min(graph_width as usize)
+            {
                 let frame_time = self.fps_stats.frame_time_history[i];
-                let normalized = ((frame_time - min_frame_time) / (max_frame_time - min_frame_time)).max(0.0).min(1.0);
+                let normalized = ((frame_time - min_frame_time)
+                    / (max_frame_time - min_frame_time))
+                    .max(0.0)
+                    .min(1.0);
                 let y_pos = (normalized * (graph_height - 1) as f64) as u32;
 
                 // Color based on performance (green = good, red = bad)
-                let (r, g, b) = if frame_time < 1.0/60.0 {
+                let (r, g, b) = if frame_time < 1.0 / 60.0 {
                     (100, 255, 100) // Good (60+ FPS)
-                } else if frame_time < 1.0/30.0 {
+                } else if frame_time < 1.0 / 30.0 {
                     (255, 255, 100) // OK (30-60 FPS)
                 } else {
                     (255, 100, 100) // Bad (<30 FPS)
                 };
 
-                gfx.draw_rect(graph_x + i as u32, graph_y + graph_height - 1 - y_pos, 1, 1, r, g, b);
+                gfx.draw_rect(
+                    graph_x + i as u32,
+                    graph_y + graph_height - 1 - y_pos,
+                    1,
+                    1,
+                    r,
+                    g,
+                    b,
+                );
             }
         }
     }
@@ -2049,39 +2075,47 @@ fn install_mouse_look(canvas: &HtmlCanvasElement) {
     // Request pointer lock for proper mouse capture
     canvas.request_pointer_lock();
 
-    let mouse_move_cb = Closure::<dyn FnMut(web_sys::MouseEvent)>::wrap(Box::new(move |evt: web_sys::MouseEvent| {
-        // Use movement_x for pointer lock (relative movement)
-        let delta_x = evt.movement_x() as f64;
-        if delta_x.abs() > 0.1 {
-            GAME.with(|g| {
-                if let Some(ref mut game) = *g.borrow_mut() {
-                    game.rotate(-delta_x * 0.002); // Pointer lock sensitivity
-                }
-            });
-        }
-    }));
+    let mouse_move_cb = Closure::<dyn FnMut(web_sys::MouseEvent)>::wrap(Box::new(
+        move |evt: web_sys::MouseEvent| {
+            // Use movement_x for pointer lock (relative movement)
+            let delta_x = evt.movement_x() as f64;
+            if delta_x.abs() > 0.1 {
+                GAME.with(|g| {
+                    if let Some(ref mut game) = *g.borrow_mut() {
+                        game.rotate(-delta_x * 0.002); // Pointer lock sensitivity
+                    }
+                });
+            }
+        },
+    ));
 
-    canvas.add_event_listener_with_callback("mousemove", mouse_move_cb.as_ref().unchecked_ref()).unwrap();
+    canvas
+        .add_event_listener_with_callback("mousemove", mouse_move_cb.as_ref().unchecked_ref())
+        .unwrap();
     mouse_move_cb.forget();
 
     // Handle pointer lock changes
-    let pointer_lock_change_cb = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |_evt: web_sys::Event| {
-        let doc = document();
-        if doc.pointer_lock_element().is_some() {
-            // Pointer lock is active
-            if let Some(body) = doc.body() {
-                body.style().set_property("cursor", "none").ok();
+    let pointer_lock_change_cb =
+        Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(move |_evt: web_sys::Event| {
+            let doc = document();
+            if doc.pointer_lock_element().is_some() {
+                // Pointer lock is active
+                if let Some(body) = doc.body() {
+                    body.style().set_property("cursor", "none").ok();
+                }
+            } else {
+                // Pointer lock lost - request it again
+                if let Some(canvas) = doc.get_element_by_id("game-canvas") {
+                    canvas.request_pointer_lock();
+                }
             }
-        } else {
-            // Pointer lock lost - request it again
-            if let Some(canvas) = doc.get_element_by_id("game-canvas") {
-                canvas.request_pointer_lock();
-            }
-        }
-    }));
+        }));
 
     document()
-        .add_event_listener_with_callback("pointerlockchange", pointer_lock_change_cb.as_ref().unchecked_ref())
+        .add_event_listener_with_callback(
+            "pointerlockchange",
+            pointer_lock_change_cb.as_ref().unchecked_ref(),
+        )
         .unwrap();
     pointer_lock_change_cb.forget();
 

@@ -1,5 +1,5 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use wasm_bindgen::prelude::*;
-use std::hash::{Hash, Hasher, DefaultHasher};
 
 #[wasm_bindgen]
 pub struct GrubMenu {
@@ -506,14 +506,14 @@ impl Memtest {
 
             for i in (0..self.test_memory.len()).step_by(4) {
                 if i + 4 <= self.test_memory.len() {
-                    self.test_memory[i..i+4].copy_from_slice(&pattern_bytes);
+                    self.test_memory[i..i + 4].copy_from_slice(&pattern_bytes);
                 }
             }
 
             // Verify
             for i in (0..self.test_memory.len()).step_by(4) {
                 if i + 4 <= self.test_memory.len() {
-                    if self.test_memory[i..i+4] != pattern_bytes {
+                    if self.test_memory[i..i + 4] != pattern_bytes {
                         self.errors += 1;
                     }
                 }

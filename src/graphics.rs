@@ -392,14 +392,32 @@ impl FrameBuffer {
     }
 
     /// Draw a triangle (outline)
-    pub fn draw_triangle(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, x3: u32, y3: u32, color: &Color) {
+    pub fn draw_triangle(
+        &mut self,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
+        x3: u32,
+        y3: u32,
+        color: &Color,
+    ) {
         self.draw_line(x1, y1, x2, y2, color);
         self.draw_line(x2, y2, x3, y3, color);
         self.draw_line(x3, y3, x1, y1, color);
     }
 
     /// Draw a filled triangle using barycentric coordinates
-    pub fn fill_triangle(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, x3: u32, y3: u32, color: &Color) {
+    pub fn fill_triangle(
+        &mut self,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
+        x3: u32,
+        y3: u32,
+        color: &Color,
+    ) {
         // Find bounding box
         let min_x = x1.min(x2).min(x3);
         let max_x = x1.max(x2).max(x3);
