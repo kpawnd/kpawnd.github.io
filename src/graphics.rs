@@ -450,7 +450,8 @@ impl FrameBuffer {
                 let b = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) as f64 / denom as f64;
                 let c = 1.0 - a - b;
 
-                if (0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b) && (0.0..=1.0).contains(&c) {
+                if (0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b) && (0.0..=1.0).contains(&c)
+                {
                     self.set_pixel(x as u32, y as u32, color);
                 }
             }
