@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build: wasm",
+      "type": "shell",
+      "command": "wasm-pack",
+      "args": [
+        "build",
+        "--target",
+        "web",
+        "--out-dir",
+        "pkg"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "run: serve (build first)",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "serve.py"
+      ],
+      "dependsOn": [
+        "build: wasm"
+      ],
+      "dependsOrder": "sequence",
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

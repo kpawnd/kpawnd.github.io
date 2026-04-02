@@ -15,7 +15,14 @@ export function showGrub() {
   try {
     if (!state.system.has_grub()) {
       const grubPre = document.querySelector('#grub pre');
-      grubPre.textContent = "error: file '/boot/grub/grub.cfg' not found.\nEntering rescue mode...\ngrub rescue>";
+      grubPre.textContent = [
+        "error: file '/boot/grub/grub.cfg' not found.",
+        'Entering rescue mode...',
+        '',
+        'grub rescue> ',
+        '',
+        "Available commands: ls, set, unset, insmod, normal, boot"
+      ].join('\n');
       return;
     }
   } catch (e) {
@@ -101,12 +108,7 @@ export function showGrub() {
 
 function updateGrubDisplay() {
   const grubPre = document.querySelector('#grub pre');
-  const currentBootloader = state.system.boot_get_current_bootloader();
-  let display = state.grubMenu.render();
-
-  // Add current bootloader info at the top
-  const bootloaderInfo = `Current Bootloader: ${currentBootloader.toUpperCase()}\n\n`;
-  display = bootloaderInfo + display;
+  const display = state.grubMenu.render();
 
   grubPre.innerHTML = display
     .replace(/\x1b\[HIGHLIGHT\]/g, '<span class="grub-selected">')

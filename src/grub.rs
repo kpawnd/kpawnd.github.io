@@ -1,6 +1,8 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 use wasm_bindgen::prelude::*;
 
+const DEFAULT_TIMEOUT_SECS: u32 = 15;
+
 #[wasm_bindgen]
 pub struct GrubMenu {
     selected: usize,
@@ -25,7 +27,7 @@ impl GrubMenu {
     pub fn new() -> Self {
         GrubMenu {
             selected: 0,
-            timer: 5,
+            timer: DEFAULT_TIMEOUT_SECS,
             entries: vec![
                 "kpawnd GNU/Linux".to_string(),
                 "Advanced options for kpawnd GNU/Linux".to_string(),
@@ -89,12 +91,12 @@ impl GrubMenu {
             " └────────────────────────────────────────────────────────────────────────────┘\n",
         );
         output.push('\n');
-        output.push_str("      Use the ▲ and ▼ keys to select which entry is highlighted.\n");
-        output.push_str("      Press enter to boot the selected OS, `e' to edit the commands\n");
-        output.push_str("      before booting or `c' for a command-line.\n");
+        output.push_str("      Use the arrow keys to select which entry is highlighted.\n");
+        output.push_str("      Press Enter to boot, `e' to edit the boot commands, or `c'\n");
+        output.push_str("      for a GRUB command line.\n");
         output.push('\n');
         output.push_str(&format!(
-            "   The highlighted entry will be executed automatically in {}s.    ",
+            "   The highlighted entry will boot automatically in {}s.            ",
             self.timer
         ));
 
@@ -131,7 +133,7 @@ impl GrubMenu {
         output.push_str("      Minimum Emacs-like screen editing is supported. TAB lists\n");
         output.push_str("      completions. Press Ctrl-x or F10 to boot, Ctrl-c or F2 for\n");
         output.push_str(
-            "      a command-line or ESC to discard edits and return to the GRUB menu.\n",
+            "      a command line, or ESC to discard edits and return to the menu.\n",
         );
 
         output
@@ -144,11 +146,9 @@ impl GrubMenu {
         output.push('\n');
         output.push_str("                            GNU GRUB  version 2.06\n");
         output.push('\n');
-        output
-            .push_str("   Minimal BASH-like line editing is supported. For the first word, TAB\n");
-        output
-            .push_str("   lists possible command completions. Anywhere else TAB lists possible\n");
-        output.push_str("   device or file completions.\n");
+        output.push_str("   Minimal BASH-like line editing is supported. For the first word, TAB\n");
+        output.push_str("   lists possible command completions. Anywhere else TAB lists possible\n");
+        output.push_str("   device or file completions. Press ESC to return to the menu.\n");
         output.push('\n');
         output.push_str(&format!("grub> {}\n", self.cmdline_buffer));
         output.push('\n');
@@ -185,7 +185,7 @@ impl GrubMenu {
     pub fn exit_special_mode(&mut self) {
         self.edit_mode = false;
         self.cmdline_mode = false;
-        self.timer = 5;
+        self.timer = DEFAULT_TIMEOUT_SECS;
     }
 
     #[wasm_bindgen]
@@ -239,7 +239,7 @@ impl GrubMenu {
     pub fn enter_advanced_mode(&mut self) {
         self.advanced_mode = true;
         self.selected = 0;
-        self.timer = 5; // Reset timer
+        self.timer = DEFAULT_TIMEOUT_SECS;
         self.entries = vec![
             "Back to main menu".to_string(),
             "kpawnd GNU/Linux, with Linux 6.1.0-kpawnd".to_string(),
@@ -252,7 +252,7 @@ impl GrubMenu {
     pub fn exit_advanced_mode(&mut self) {
         self.advanced_mode = false;
         self.selected = 0;
-        self.timer = 5;
+        self.timer = DEFAULT_TIMEOUT_SECS;
         self.entries = vec![
             "kpawnd GNU/Linux".to_string(),
             "Advanced options for kpawnd GNU/Linux".to_string(),

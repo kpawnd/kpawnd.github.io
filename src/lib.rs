@@ -1,5 +1,4 @@
 pub mod boot;
-pub mod desktop;
 pub mod doom;
 pub mod graphics;
 #[cfg(feature = "webgl")]
@@ -9,7 +8,6 @@ pub mod idle;
 pub mod kernel;
 pub mod memory;
 pub mod nano;
-pub mod neofetch;
 pub mod network;
 pub mod persist;
 pub mod physics;
@@ -22,7 +20,6 @@ pub mod system;
 pub mod vfs;
 pub mod vfs_persist;
 
-pub use desktop::Desktop;
 pub use doom::{memory_usage, start_doom, start_doom_with_difficulty, stop_doom};
 pub use graphics::{Graphics, MatrixScreensaver, SnakeGame};
 #[cfg(feature = "webgl")]
@@ -46,7 +43,7 @@ fn install_panic_hook() {
             // Attempt auto-restart after brief delay
             if let Some(w) = window() {
                 let restart = Closure::<dyn FnMut()>::wrap(Box::new(|| {
-                    // Graceful stop both subsystems then leave terminal visible
+                    // Stop both subsystems then leave terminal visible
                     crate::doom::stop_doom();
                     crate::screensaver::stop_screensaver();
                 }));

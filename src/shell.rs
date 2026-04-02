@@ -70,5 +70,8 @@ pub fn prompt(kernel: &Kernel, user: &str, home: &str) -> String {
     } else {
         cwd.to_string()
     };
-    format!("{}@kpawnd:{}$ ", user, display)
+    format!(
+        "\x1b[COLOR:green]{}@kpawnd\x1b[COLOR:white]:\x1b[COLOR:cyan]{}\x1b[COLOR:white]$ \x1b[COLOR:reset]",
+        user, display
+    )
 }

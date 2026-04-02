@@ -1,10 +1,6 @@
-use js_sys::Reflect;
 use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{
-    console, MessageEvent, RtcDataChannel, RtcPeerConnection, RtcSdpType, RtcSessionDescriptionInit,
-};
 use web_sys::{window, AudioContext, Document, HtmlCanvasElement, OscillatorType};
 
 use crate::graphics::Graphics;
@@ -303,50 +299,6 @@ thread_local! {
     static AUDIO_CTX: std::cell::RefCell<Option<AudioContext>> = const { std::cell::RefCell::new(None) };
 }
 
-fn encode_sdp(s: &str) -> String {
-    console::log_1(&JsValue::from_str(&format!(
-        "[encode_sdp] Input length: {}, has CRLF: {}",
-        s.len(),
-        s.contains("\r\n")
-    )));
-    // Filter out a=max-message-size before encoding - preserve exact line structure
-    let lines: Vec<&str> = s.split("\r\n").collect();
-    console::log_1(&JsValue::from_str(&format!(
-        "[encode_sdp] Split into {} lines",
-        lines.len()
-    )));
-    let filtered: Vec<&str> = lines
-        .into_iter()
-        .filter(|line| !line.starts_with("a=max-message-size:"))
-        .collect();
-    console::log_1(&JsValue::from_str(&format!(
-        "[encode_sdp] After filter: {} lines",
-        filtered.len()
-    )));
-    let joined = filtered.join("\r\n");
-    console::log_1(&JsValue::from_str(&format!(
-        "[encode_sdp] Joined length: {}, first 50: {:?}",
-        joined.len(),
-        &joined.chars().take(50).collect::<String>()
-    )));
-    window().unwrap().btoa(&joined).unwrap_or_default()
-}
-
-fn decode_sdp(s: &str) -> String {
-    console::log_1(&JsValue::from_str(&format!(
-        "[decode_sdp] Input base64 length: {}",
-        s.len()
-    )));
-    let raw = window().unwrap().atob(s).unwrap_or_default();
-    console::log_1(&JsValue::from_str(&format!(
-        "[decode_sdp] Decoded length: {}, starts with v=: {}, first 50 chars: {:?}",
-        raw.len(),
-        raw.starts_with("v="),
-        &raw.chars().take(50).collect::<String>()
-    )));
-    raw
-}
-
 #[derive(Clone)]
 struct Monster {
     body: Body,
@@ -424,7 +376,6 @@ struct DoomGame {
     // Ammo pickups
     ammo_pickups: Vec<Vec2>,
     last_ammo_spawn_time: f64,
-    remote_players: Vec<RemotePlayer>,
     procedural: bool,
 }
 
@@ -493,7 +444,6 @@ impl DoomGame {
             time_of_day: 0.25, // Start at dawn
             ammo_pickups: Vec::new(),
             last_ammo_spawn_time: 0.0,
-            remote_players: Vec::new(),
             procedural: false,
         }
     }
@@ -1175,32 +1125,6 @@ impl DoomGame {
             }
         }
 
-        // Render remote players (green diamond)
-        for rp in &self.remote_players {
-            let sprite_pos = rp.body.position.sub(&self.player_body.position);
-            let inv_det = 1.0 / (self.plane.x * self.dir.y - self.dir.x * self.plane.y);
-            let transform_x = inv_det * (self.dir.y * sprite_pos.x - self.dir.x * sprite_pos.y);
-            let transform_y =
-                inv_det * (-self.plane.y * sprite_pos.x + self.plane.x * sprite_pos.y);
-            if transform_y > 0.1 && transform_y < 25.0 {
-                let screen_x = ((w as f64 / 2.0) * (1.0 + transform_x / transform_y)) as i32;
-                let size = ((14.0 / transform_y).abs() as i32).clamp(2, 16);
-                if screen_x >= 0 && screen_x < w as i32 {
-                    for dy in -size..=size {
-                        for dx in -size..=size {
-                            if dx.abs() + dy.abs() < size {
-                                let px = screen_x + dx;
-                                let py = half_h as i32 + dy;
-                                if px >= 0 && px < w as i32 && py >= 0 && py < h as i32 {
-                                    gfx.set_pixel_rgb(px as u32, py as u32, 0, 220, 80);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Render particles
         for particle in &self.particles {
             let sprite_pos = particle.position.sub(&self.player_body.position);
@@ -1474,12 +1398,6 @@ impl DoomGame {
         };
         self.draw_text(gfx, diff_str, diff_x, diff_y, diff_color);
 
-        // Remote player count (multiplayer indicator)
-        if !self.remote_players.is_empty() {
-            let mp_str = format!("MP:{}", self.remote_players.len());
-            self.draw_text(gfx, &mp_str, diff_x, diff_y + 18, (0, 180, 255));
-        }
-
         // Enhanced FPS counter with statistics and mini graph
         self.render_fps_display(gfx, w, h);
 
@@ -1659,51 +1577,6 @@ impl DoomGame {
     }
 }
 
-#[derive(Clone)]
-struct RemotePlayer {
-    id: String,
-    body: Body,
-}
-
-// Multiplayer WASM bindings
-#[wasm_bindgen]
-pub fn doom_add_remote_player(id: &str, x: f64, y: f64) {
-    GAME.with(|gm| {
-        if let Some(ref mut game) = *gm.borrow_mut() {
-            if game.remote_players.iter().any(|p| p.id == id) {
-                return;
-            }
-            let mut body = Body::new(x, y, 0.3);
-            body.friction = 0.3;
-            game.remote_players.push(RemotePlayer {
-                id: id.to_string(),
-                body,
-            });
-        }
-    });
-}
-
-#[wasm_bindgen]
-pub fn doom_update_remote_player(id: &str, x: f64, y: f64) {
-    GAME.with(|gm| {
-        if let Some(ref mut game) = *gm.borrow_mut() {
-            if let Some(p) = game.remote_players.iter_mut().find(|p| p.id == id) {
-                p.body.position.x = x;
-                p.body.position.y = y;
-            }
-        }
-    });
-}
-
-#[wasm_bindgen]
-pub fn doom_remove_remote_player(id: &str) {
-    GAME.with(|gm| {
-        if let Some(ref mut game) = *gm.borrow_mut() {
-            game.remote_players.retain(|p| p.id != id);
-        }
-    });
-}
-
 #[wasm_bindgen]
 pub fn doom_enable_procedural() {
     GAME.with(|gm| {
@@ -1729,237 +1602,6 @@ pub fn doom_get_player_position() -> js_sys::Array {
     });
     arr
 }
-
-thread_local! {
-    static MP_ID: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
-    static MP_PC: std::cell::RefCell<Option<RtcPeerConnection>> = const { std::cell::RefCell::new(None) };
-    static MP_CHAN: std::cell::RefCell<Option<RtcDataChannel>> = const { std::cell::RefCell::new(None) };
-    static MP_INTERVAL: std::cell::RefCell<Option<i32>> = const { std::cell::RefCell::new(None) };
-    static MP_HOSTING: std::cell::RefCell<bool> = const { std::cell::RefCell::new(false) };
-}
-
-fn local_player_id() -> String {
-    MP_ID.with(|id| {
-        if id.borrow().is_empty() {
-            let rand = js_sys::Math::random();
-            let s = format!("{:08x}", (rand * 0xffff_ffffu32 as f64) as u32);
-            *id.borrow_mut() = s;
-        }
-        id.borrow().clone()
-    })
-}
-
-fn broadcast_position() {
-    let pid = local_player_id();
-    let (x, y) = GAME.with(|gm| {
-        if let Some(ref g) = *gm.borrow() {
-            (g.player_body.position.x, g.player_body.position.y)
-        } else {
-            (0.0, 0.0)
-        }
-    });
-    let msg = serde_json::json!({"t":"pos","id":pid,"x":x,"y":y}).to_string();
-    MP_CHAN.with(|ch| {
-        if let Some(ref dc) = *ch.borrow() {
-            let _ = dc.send_with_str(&msg);
-        }
-    });
-}
-
-fn handle_incoming(data: &str) {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-        let t = val.get("t").and_then(|v| v.as_str()).unwrap_or("");
-        let id = val.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        if id == local_player_id() {
-            return;
-        } // ignore own
-        match t {
-            "join" => {
-                let x = val.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let y = val.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                GAME.with(|gm| {
-                    if let Some(ref mut g) = *gm.borrow_mut() {
-                        if !g.remote_players.iter().any(|p| p.id == id) {
-                            let mut body = Body::new(x, y, 0.3);
-                            body.friction = 0.3;
-                            g.remote_players.push(RemotePlayer {
-                                id: id.to_string(),
-                                body,
-                            });
-                        }
-                    }
-                });
-            }
-            "leave" => {
-                GAME.with(|gm| {
-                    if let Some(ref mut g) = *gm.borrow_mut() {
-                        g.remote_players.retain(|p| p.id != id);
-                    }
-                });
-            }
-            "pos" => {
-                let x = val.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let y = val.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                GAME.with(|gm| {
-                    if let Some(ref mut g) = *gm.borrow_mut() {
-                        if let Some(p) = g.remote_players.iter_mut().find(|p| p.id == id) {
-                            p.body.position.x = x;
-                            p.body.position.y = y;
-                        }
-                    }
-                });
-            }
-            _ => {}
-        }
-    }
-}
-
-fn setup_interval() {
-    MP_INTERVAL.with(|iv| {
-        if iv.borrow().is_some() {
-            return;
-        }
-        let cb = Closure::<dyn FnMut()>::wrap(Box::new(broadcast_position));
-        let handle = window()
-            .unwrap()
-            .set_interval_with_callback_and_timeout_and_arguments_0(
-                cb.as_ref().unchecked_ref(),
-                200,
-            )
-            .unwrap();
-        cb.forget();
-        *iv.borrow_mut() = Some(handle);
-    });
-}
-
-#[wasm_bindgen]
-pub fn mp_id() -> String {
-    local_player_id()
-}
-
-#[wasm_bindgen]
-pub async fn mp_host() -> Result<String, JsValue> {
-    MP_HOSTING.with(|h| *h.borrow_mut() = true);
-    let pc = RtcPeerConnection::new()?;
-    let channel = pc.create_data_channel("doom");
-    MP_CHAN.with(|c| *c.borrow_mut() = Some(channel.clone()));
-    let onmsg = Closure::<dyn FnMut(MessageEvent)>::wrap(Box::new(|e: MessageEvent| {
-        if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
-            handle_incoming(&String::from(txt));
-        }
-    }));
-    channel.set_onmessage(Some(onmsg.as_ref().unchecked_ref()));
-    onmsg.forget();
-    MP_PC.with(|p| *p.borrow_mut() = Some(pc.clone()));
-    let offer = wasm_bindgen_futures::JsFuture::from(pc.create_offer()).await?;
-    let offer_sdp_initial = Reflect::get(&offer, &JsValue::from_str("sdp"))?
-        .as_string()
-        .unwrap_or_default();
-    let desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
-    desc.set_sdp(&offer_sdp_initial);
-    wasm_bindgen_futures::JsFuture::from(pc.set_local_description(&desc)).await?;
-    // Return initial SDP (without waiting for full ICE gathering to avoid unsupported APIs)
-    let code = format!("{}:{}", encode_sdp(&offer_sdp_initial), local_player_id());
-    Ok(code)
-}
-
-#[wasm_bindgen]
-pub async fn mp_join(code: &str) -> Result<String, JsValue> {
-    let mut parts = code.splitn(2, ':');
-    let offer_enc = parts.next().unwrap_or("");
-    let host_id = parts.next().unwrap_or("");
-    let offer_sdp = decode_sdp(offer_enc);
-    console::log_1(&JsValue::from_str(&format!(
-        "[MP_JOIN] Decoded SDP:\n{}",
-        offer_sdp
-    )));
-    let pc = RtcPeerConnection::new()?;
-    MP_PC.with(|p| *p.borrow_mut() = Some(pc.clone()));
-    let ondc = Closure::<dyn FnMut(web_sys::Event)>::wrap(Box::new(|e: web_sys::Event| {
-        if let Some(dc) = e.target().and_then(|t| t.dyn_into::<RtcDataChannel>().ok()) {
-            MP_CHAN.with(|c| *c.borrow_mut() = Some(dc.clone()));
-            let onmsg = Closure::<dyn FnMut(MessageEvent)>::wrap(Box::new(|ev: MessageEvent| {
-                if let Ok(txt) = ev.data().dyn_into::<js_sys::JsString>() {
-                    handle_incoming(&String::from(txt));
-                }
-            }));
-            dc.set_onmessage(Some(onmsg.as_ref().unchecked_ref()));
-            onmsg.forget();
-            // Send join message when open
-            let onopen = Closure::<dyn FnMut()>::wrap(Box::new(|| {
-                let pid = local_player_id();
-                let msg = serde_json::json!({"t":"join","id":pid}).to_string();
-                MP_CHAN.with(|c| {
-                    if let Some(ref ch) = *c.borrow() {
-                        let _ = ch.send_with_str(&msg);
-                    }
-                });
-            }));
-            dc.set_onopen(Some(onopen.as_ref().unchecked_ref()));
-            onopen.forget();
-        }
-    }));
-    pc.set_ondatachannel(Some(ondc.as_ref().unchecked_ref()));
-    ondc.forget();
-    let offer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
-    offer_desc.set_sdp(&offer_sdp);
-    wasm_bindgen_futures::JsFuture::from(pc.set_remote_description(&offer_desc)).await?;
-    let answer = wasm_bindgen_futures::JsFuture::from(pc.create_answer()).await?;
-    let answer_sdp_initial = Reflect::get(&answer, &JsValue::from_str("sdp"))?
-        .as_string()
-        .unwrap_or_default();
-    let answer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
-    answer_desc.set_sdp(&answer_sdp_initial);
-    wasm_bindgen_futures::JsFuture::from(pc.set_local_description(&answer_desc)).await?;
-    // Return initial SDP (without waiting for full ICE gathering)
-    let answer_code = format!("{}:{}", encode_sdp(&answer_sdp_initial), host_id);
-    Ok(answer_code)
-}
-
-#[wasm_bindgen]
-pub async fn mp_finalize(answer_code: &str) -> Result<(), JsValue> {
-    let mut parts = answer_code.splitn(2, ':');
-    let answer_enc = parts.next().unwrap_or("");
-    let _host_id = parts.next().unwrap_or("");
-    let answer_sdp = decode_sdp(answer_enc);
-    console::log_1(&JsValue::from_str(&format!(
-        "[MP_FINALIZE] Decoded SDP:\n{}",
-        answer_sdp
-    )));
-    let answer_desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
-    answer_desc.set_sdp(&answer_sdp);
-    let pc_opt = MP_PC.with(|p| p.borrow().clone());
-    if let Some(pc) = pc_opt {
-        wasm_bindgen_futures::JsFuture::from(pc.set_remote_description(&answer_desc)).await?;
-        // After channel open send join
-        MP_CHAN.with(|c| {
-            if let Some(ref ch) = *c.borrow() {
-                let pid = local_player_id();
-                let msg = serde_json::json!({"t":"join","id":pid}).to_string();
-                let _ = ch.send_with_str(&msg);
-            }
-        });
-        setup_interval();
-    }
-    Ok(())
-}
-
-#[wasm_bindgen]
-pub fn mp_disconnect() {
-    MP_INTERVAL.with(|iv| {
-        if let Some(id) = *iv.borrow() {
-            window().unwrap().clear_interval_with_handle(id);
-        }
-        *iv.borrow_mut() = None;
-    });
-    MP_CHAN.with(|c| *c.borrow_mut() = None);
-    MP_PC.with(|p| {
-        if let Some(pc) = p.borrow().clone() {
-            pc.close();
-        }
-    });
-}
-
 impl Monster {
     fn new(x: f64, y: f64, sprite_type: u8, difficulty: Difficulty) -> Self {
         let max_health = match (sprite_type, difficulty) {

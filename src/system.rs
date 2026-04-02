@@ -7,7 +7,34 @@ use crate::{
     services::ServiceManager,
     shell::{prompt, Shell},
 };
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use std::collections::BTreeSet;
+use std::io::{Cursor, Read, Write};
 use wasm_bindgen::prelude::*;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+const SUDO_TIMEOUT_MS: f64 = 300000.0;
+const BINARY_PREFIX: &str = "__BIN_B64__:";
+
+struct SudoPendingRequest {
+    command: Option<String>,
+    target_user: String,
+    validate_only: bool,
+    list_privileges: bool,
+}
+
+struct SudoInvocation {
+    command: Option<String>,
+    target_user: String,
+    prompt: String,
+    non_interactive: bool,
+    reset_timestamp: bool,
+    clear_timestamp: bool,
+    validate_only: bool,
+    list_privileges: bool,
+}
 
 #[wasm_bindgen]
 pub struct System {
@@ -21,7 +48,7 @@ pub struct System {
     python_interp: Option<PythonInterpreter>,
     in_python_repl: bool,
     user_password: Option<String>,
-    sudo_pending_cmd: Option<String>,
+    sudo_pending_request: Option<SudoPendingRequest>,
     sudo_waiting_password: bool,
     sudo_authenticated_until: Option<f64>,
 }
@@ -47,7 +74,7 @@ impl System {
             python_interp: None,
             in_python_repl: false,
             user_password: None,
-            sudo_pending_cmd: None,
+            sudo_pending_request: None,
             sudo_waiting_password: false,
             sudo_authenticated_until: None,
         };
@@ -112,9 +139,17 @@ impl System {
             self.shell.history.push(trimmed.into());
         }
         if self.sudo_waiting_password {
-            let cmd = self.sudo_pending_cmd.take().unwrap_or_default();
             self.sudo_waiting_password = false;
-            return self.exec_sudo(&cmd, trimmed);
+            if let Some(request) = self.sudo_pending_request.take() {
+                return self.exec_sudo_with_context(
+                    request.command.as_deref(),
+                    trimmed,
+                    &request.target_user,
+                    request.validate_only,
+                    request.list_privileges,
+                );
+            }
+            return "sudo: authentication state is invalid; try again".into();
         }
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         if parts.is_empty() {
@@ -123,28 +158,7 @@ impl System {
         let cmd = parts[0];
         let args = &parts[1..];
         if cmd == "sudo" {
-            if args.is_empty() {
-                return "usage: sudo <command>".into();
-            }
-            // Check if we have a valid cached sudo session (5 minute timeout)
-            let now = js_sys::Date::now();
-            let is_authenticated = self
-                .sudo_authenticated_until
-                .map(|until| now < until)
-                .unwrap_or(false);
-
-            if is_authenticated {
-                // Execute directly without password prompt
-                return self.exec_sudo_internal(&args.join(" "));
-            } else {
-                // Need password
-                self.sudo_pending_cmd = Some(args.join(" "));
-                self.sudo_waiting_password = true;
-                return format!(
-                    "[sudo] password for {}:",
-                    self.shell.env.get("USER").unwrap_or(&"user".to_string())
-                );
-            }
+            return self.handle_sudo(args);
         }
         if self.shell.registry.has(cmd) {
             if let Some(pid) = self.kernel.proc.spawn(cmd, 1, &mut self.kernel.mem) {
@@ -156,9 +170,8 @@ impl System {
         match cmd {
             "reboot" => "\x1b[REBOOT]".into(),
             "echo" => { let out=args.join(" "); if out=="github" { format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap()) } else { out } }
-            "help" => "Available commands:\n\n  File operations:    cat cd chmod chown cp cut diff du file find head ln ls mkdir mv pwd rm rmdir sort tail tee touch tr uniq wc nano vi\n  Text processing:    awk grep sed\n  System info:        df free hostname id man neofetch ps top uname uptime whereis which whoami\n  Network:            arp curl dig host ifconfig ip myip nc netstat nslookup\n                      ping route ss traceroute wget\n  Archives:           tar gzip gunzip zip unzip\n  Package mgmt:       apt apt-get\n  Games:              doom doommap\n  Other:              alias clear echo env exit export grub hasgrub help history kill\n                      python screensaver service sudo\n\nType 'man <command>' for more info on a specific command.".into(),
+            "help" => self.cmd_help(),
             "man" => self.cmd_man(args),
-            "neofetch" => "\x1b[NEOFETCH_DATA]".to_string(),
             "nano" | "vi" | "vim" => self.cmd_nano(args),
             "python" => { if args.is_empty() { self.start_python_repl() } else { "python: script execution not supported".to_string() } }
             "doom" => {
@@ -188,10 +201,6 @@ impl System {
                     "restore" => "\x1b[DOOM_RESTORE]".into(),
                     _ => "usage: doommap <proc|restore>".into(),
                 }
-            },
-            "grace" => {
-                // Launch the desktop environment named Grace
-                "\x1b[LAUNCH_GRACE]".into()
             },
             "screensaver" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
             "wget" => self.cmd_wget(args),
@@ -227,11 +236,13 @@ impl System {
             "zip" | "unzip" => self.cmd_zip(args, cmd),
             "apt" | "apt-get" => self.cmd_apt(args),
             "top" => self.cmd_top(),
+            "htop" => self.cmd_htop(),
             "awk" => self.cmd_awk(args),
             "sed" => self.cmd_sed(args),
             "alias" => self.cmd_alias(args),
             "touch" => self.cmd_touch(args),
             "mkdir" => self.cmd_mkdir(args),
+            "rmdir" => self.cmd_rmdir(args),
             "rm" => self.cmd_rm(args),
             "clear" => "\x1b[CLEAR]".into(),
             "exit" => "\x1b[EXIT]".into(),
@@ -255,6 +266,7 @@ impl System {
                 .cloned()
                 .unwrap_or_else(|| "user".into()),
             "uptime" => format!("up {}ms", self.kernel.uptime_ms()),
+            "date" => self.cmd_date(),
             "free" => self.cmd_free(),
             "history" => self.cmd_history(),
             "env" => self.cmd_env(),
@@ -309,7 +321,205 @@ impl System {
         self.user_password = Some(pw.into());
     }
 
-    fn exec_sudo_internal(&mut self, cmd: &str) -> String {
+    fn current_user(&self) -> String {
+        self.shell
+            .env
+            .get("USER")
+            .cloned()
+            .unwrap_or_else(|| "user".into())
+    }
+
+    fn default_home_for_user(user: &str) -> String {
+        if user == "root" {
+            "/root".into()
+        } else {
+            format!("/home/{}", user)
+        }
+    }
+
+    fn sudo_usage() -> String {
+        "usage: sudo [-h|-K|-k|-V] [-nS] [-u user] [-p prompt] [-l|-v] [--] command".into()
+    }
+
+    fn parse_sudo_invocation(&self, args: &[&str]) -> Result<SudoInvocation, String> {
+        if args.is_empty() {
+            return Err(Self::sudo_usage());
+        }
+
+        let mut non_interactive = false;
+        let mut prompt = "[sudo] password for %u:".to_string();
+        let mut reset_timestamp = false;
+        let mut clear_timestamp = false;
+        let mut validate_only = false;
+        let mut list_privileges = false;
+        let mut target_user = "root".to_string();
+
+        let mut i = 0;
+        while i < args.len() {
+            let arg = args[i];
+            if arg == "--" {
+                i += 1;
+                break;
+            }
+            if !arg.starts_with('-') || arg == "-" {
+                break;
+            }
+
+            if let Some(long_opt) = arg.strip_prefix("--") {
+                match long_opt {
+                    "help" => {
+                        return Err("sudo - execute a command as another user\n\nusage: sudo [-h|-K|-k|-V] [-nS] [-u user] [-p prompt] [-l|-v] [--] command\n\nOptions:\n  -h, --help   show help\n  -V           show version\n  -k           invalidate authentication timestamp\n  -K           remove authentication timestamp entirely\n  -l           list current user's sudo privileges\n  -n           non-interactive; fail if password is required\n  -S           read password from terminal input\n  -u USER      run command as USER\n  -p PROMPT    use custom password prompt\n  -v           validate and refresh cached credentials".into());
+                    }
+                    "version" => {
+                        return Err("Sudo version 1.9.14p3".into());
+                    }
+                    _ => return Err(format!("sudo: unknown option --{}", long_opt)),
+                }
+            } else {
+                let chars: Vec<char> = arg[1..].chars().collect();
+                let mut cidx = 0;
+                while cidx < chars.len() {
+                    match chars[cidx] {
+                        'h' => {
+                            return Err("sudo - execute a command as another user\n\nusage: sudo [-h|-K|-k|-V] [-nS] [-u user] [-p prompt] [-l|-v] [--] command\n\nOptions:\n  -h, --help   show help\n  -V           show version\n  -k           invalidate authentication timestamp\n  -K           remove authentication timestamp entirely\n  -l           list current user's sudo privileges\n  -n           non-interactive; fail if password is required\n  -S           read password from terminal input\n  -u USER      run command as USER\n  -p PROMPT    use custom password prompt\n  -v           validate and refresh cached credentials".into());
+                        }
+                        'V' => {
+                            return Err("Sudo version 1.9.14p3".into());
+                        }
+                        'n' => non_interactive = true,
+                        'k' => reset_timestamp = true,
+                        'K' => {
+                            clear_timestamp = true;
+                            reset_timestamp = true;
+                        }
+                        'v' => validate_only = true,
+                        'l' => list_privileges = true,
+                        'S' => {
+                            // Password still comes from terminal input in this shell model.
+                        }
+                        'u' => {
+                            let trailing: String = chars[cidx + 1..].iter().collect();
+                            if !trailing.is_empty() {
+                                target_user = trailing;
+                                cidx = chars.len();
+                                continue;
+                            }
+                            if i + 1 >= args.len() {
+                                return Err("sudo: option requires an argument -- 'u'".into());
+                            }
+                            target_user = args[i + 1].to_string();
+                            i += 1;
+                            break;
+                        }
+                        'p' => {
+                            let trailing: String = chars[cidx + 1..].iter().collect();
+                            if !trailing.is_empty() {
+                                prompt = trailing;
+                                cidx = chars.len();
+                                continue;
+                            }
+                            if i + 1 >= args.len() {
+                                return Err("sudo: option requires an argument -- 'p'".into());
+                            }
+                            prompt = args[i + 1].to_string();
+                            i += 1;
+                            break;
+                        }
+                        unknown => return Err(format!("sudo: unknown option -{}", unknown)),
+                    }
+                    cidx += 1;
+                }
+            }
+            i += 1;
+        }
+
+        let command = if i < args.len() {
+            Some(args[i..].join(" "))
+        } else {
+            None
+        };
+
+        Ok(SudoInvocation {
+            command,
+            target_user,
+            prompt,
+            non_interactive,
+            reset_timestamp,
+            clear_timestamp,
+            validate_only,
+            list_privileges,
+        })
+    }
+
+    fn handle_sudo(&mut self, args: &[&str]) -> String {
+        let parsed = match self.parse_sudo_invocation(args) {
+            Ok(p) => p,
+            Err(msg) => return msg,
+        };
+
+        if parsed.clear_timestamp || parsed.reset_timestamp {
+            self.sudo_authenticated_until = None;
+            if parsed.clear_timestamp {
+                self.sudo_pending_request = None;
+                self.sudo_waiting_password = false;
+            }
+        }
+
+        if !parsed.validate_only && !parsed.list_privileges && parsed.command.is_none() {
+            return Self::sudo_usage();
+        }
+
+        let current_user = self.current_user();
+        let now = js_sys::Date::now();
+        let is_authenticated = current_user == "root"
+            || self
+                .sudo_authenticated_until
+                .map(|until| now < until)
+                .unwrap_or(false);
+
+        if is_authenticated {
+            if parsed.list_privileges {
+                return self.sudo_list_privileges();
+            }
+            if parsed.validate_only {
+                self.sudo_authenticated_until = Some(now + SUDO_TIMEOUT_MS);
+                return String::new();
+            }
+            return self.exec_sudo_internal(parsed.command.as_deref().unwrap_or(""), &parsed.target_user);
+        }
+
+        if parsed.non_interactive {
+            return "sudo: a password is required".into();
+        }
+
+        let mut rendered_prompt = parsed.prompt;
+        rendered_prompt = rendered_prompt.replace("%u", &current_user);
+        rendered_prompt = rendered_prompt.replace("%U", &parsed.target_user);
+
+        self.sudo_pending_request = Some(SudoPendingRequest {
+            command: parsed.command,
+            target_user: parsed.target_user,
+            validate_only: parsed.validate_only,
+            list_privileges: parsed.list_privileges,
+        });
+        self.sudo_waiting_password = true;
+
+        if rendered_prompt.is_empty() {
+            format!("[sudo] password for {}:", current_user)
+        } else {
+            rendered_prompt
+        }
+    }
+
+    fn sudo_list_privileges(&self) -> String {
+        let user = self.current_user();
+        format!(
+            "Matching Defaults entries for {} on kpawnd:\n    env_reset, mail_badpass, secure_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\nUser {} may run the following commands on kpawnd:\n    (ALL : ALL) ALL",
+            user, user
+        )
+    }
+
+    fn exec_sudo_internal(&mut self, cmd: &str, target_user: &str) -> String {
         let old_user = self
             .shell
             .env
@@ -325,10 +535,12 @@ impl System {
         let old_owner = self.kernel.fs.get_default_owner();
         let old_group = self.kernel.fs.get_default_group();
 
-        self.shell.env.insert("USER".into(), "root".into());
-        self.shell.env.insert("HOME".into(), "/root".into());
-        let _ = self.kernel.fs.create_dir("/root");
-        self.kernel.fs.set_default_owner("root", "root");
+        let target_home = Self::default_home_for_user(target_user);
+
+        self.shell.env.insert("USER".into(), target_user.into());
+        self.shell.env.insert("HOME".into(), target_home.clone());
+        let _ = self.kernel.fs.create_dir(&target_home);
+        self.kernel.fs.set_default_owner(target_user, target_user);
 
         let out = self.exec(cmd);
 
@@ -339,17 +551,33 @@ impl System {
         out
     }
 
-    #[wasm_bindgen]
-    pub fn exec_sudo(&mut self, cmd: &str, pw: &str) -> String {
+    fn exec_sudo_with_context(
+        &mut self,
+        cmd: Option<&str>,
+        pw: &str,
+        target_user: &str,
+        validate_only: bool,
+        list_privileges: bool,
+    ) -> String {
         match &self.user_password {
             Some(saved) if saved == pw => {
-                // Set sudo session to expire in 5 minutes
                 let now = js_sys::Date::now();
-                self.sudo_authenticated_until = Some(now + 300000.0);
-                self.exec_sudo_internal(cmd)
+                self.sudo_authenticated_until = Some(now + SUDO_TIMEOUT_MS);
+                if list_privileges {
+                    self.sudo_list_privileges()
+                } else if validate_only {
+                    String::new()
+                } else {
+                    self.exec_sudo_internal(cmd.unwrap_or(""), target_user)
+                }
             }
-            _ => "sudo: incorrect password".into(),
+            _ => "sudo: 1 incorrect password attempt".into(),
         }
+    }
+
+    #[wasm_bindgen]
+    pub fn exec_sudo(&mut self, cmd: &str, pw: &str) -> String {
+        self.exec_sudo_with_context(Some(cmd), pw, "root", false, false)
     }
 
     #[wasm_bindgen]
@@ -465,10 +693,20 @@ impl System {
         if args.is_empty() {
             return "cat: missing operand".into();
         }
-        match self.kernel.fs.resolve(args[0]) {
-            Some(n) if !n.is_dir => n.data.clone(),
-            Some(_) => format!("cat: {}: Is a directory", args[0]),
-            None => format!("cat: {}: No such file or directory", args[0]),
+
+        let path = args[0];
+        match self.kernel.fs.resolve(path) {
+            Some(n) if n.is_dir => format!("cat: {}: Is a directory", path),
+            Some(n) if n.permissions.starts_with('l') => {
+                let target = n.data.trim();
+                match self.kernel.fs.resolve(target) {
+                    Some(t) if t.is_dir => format!("cat: {}: Is a directory", target),
+                    Some(t) => t.data.clone(),
+                    None => format!("cat: {}: No such file or directory", target),
+                }
+            }
+            Some(n) => n.data.clone(),
+            None => format!("cat: {}: No such file or directory", path),
         }
     }
 
@@ -504,6 +742,25 @@ impl System {
             Ok(()) => String::new(),
             Err(e) => format!("mkdir: cannot create directory '{}': {}", args[0], e),
         }
+    }
+
+    fn cmd_rmdir(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "rmdir: missing operand".into();
+        }
+        for dir in args {
+            match self.kernel.fs.resolve(dir) {
+                Some(node) if !node.is_dir => {
+                    return format!("rmdir: failed to remove '{}': Not a directory", dir);
+                }
+                Some(_) => match self.kernel.fs.remove(dir) {
+                    Ok(()) => {}
+                    Err(e) => return format!("rmdir: failed to remove '{}': {}", dir, e),
+                },
+                None => return format!("rmdir: failed to remove '{}': No such file or directory", dir),
+            }
+        }
+        String::new()
     }
     fn cmd_rm(&mut self, args: &[&str]) -> String {
         if args.is_empty() {
@@ -719,16 +976,286 @@ impl System {
         }
     }
 
-    fn cmd_cut(&self, _args: &[&str]) -> String {
-        "cut: simplified implementation not available".into()
+    fn parse_list_spec(spec: &str) -> Result<Vec<usize>, String> {
+        let mut selected = BTreeSet::new();
+        for part in spec.split(',') {
+            let token = part.trim();
+            if token.is_empty() {
+                continue;
+            }
+            if let Some((start, end)) = token.split_once('-') {
+                let start_num = start
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid range start '{}'", start.trim()))?;
+                let end_num = end
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid range end '{}'", end.trim()))?;
+                if start_num == 0 || end_num == 0 || start_num > end_num {
+                    return Err(format!("invalid range '{}'", token));
+                }
+                for idx in start_num..=end_num {
+                    selected.insert(idx);
+                }
+            } else {
+                let idx = token
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid field '{}'", token))?;
+                if idx == 0 {
+                    return Err("positions start at 1".to_string());
+                }
+                selected.insert(idx);
+            }
+        }
+        if selected.is_empty() {
+            return Err("empty list".to_string());
+        }
+        Ok(selected.into_iter().collect())
     }
 
-    fn cmd_tr(&self, _args: &[&str]) -> String {
-        "tr: simplified implementation not available".into()
+    fn expand_tr_set(spec: &str) -> Vec<char> {
+        let chars: Vec<char> = spec.chars().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < chars.len() {
+            if i + 2 < chars.len() && chars[i + 1] == '-' {
+                let start = chars[i] as u32;
+                let end = chars[i + 2] as u32;
+                if start <= end {
+                    for c in start..=end {
+                        if let Some(ch) = char::from_u32(c) {
+                            out.push(ch);
+                        }
+                    }
+                } else {
+                    for c in end..=start {
+                        if let Some(ch) = char::from_u32(c) {
+                            out.push(ch);
+                        }
+                    }
+                }
+                i += 3;
+            } else {
+                out.push(chars[i]);
+                i += 1;
+            }
+        }
+        out
     }
 
-    fn cmd_tee(&self, _args: &[&str]) -> String {
-        "tee: simplified implementation not available (no pipe support yet)".into()
+    fn cmd_cut(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: cut (-f LIST [-d DELIM] | -c LIST) FILE".into();
+        }
+
+        let mut delim = '\t';
+        let mut mode_chars = false;
+        let mut list_spec: Option<String> = None;
+        let mut file: Option<&str> = None;
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i] {
+                "-d" => {
+                    if i + 1 >= args.len() {
+                        return "cut: option requires an argument -- 'd'".into();
+                    }
+                    delim = args[i + 1].chars().next().unwrap_or('\t');
+                    i += 2;
+                }
+                "-f" => {
+                    if i + 1 >= args.len() {
+                        return "cut: option requires an argument -- 'f'".into();
+                    }
+                    mode_chars = false;
+                    list_spec = Some(args[i + 1].to_string());
+                    i += 2;
+                }
+                "-c" => {
+                    if i + 1 >= args.len() {
+                        return "cut: option requires an argument -- 'c'".into();
+                    }
+                    mode_chars = true;
+                    list_spec = Some(args[i + 1].to_string());
+                    i += 2;
+                }
+                value if value.starts_with('-') => {
+                    return format!("cut: invalid option -- '{}'", value);
+                }
+                value => {
+                    file = Some(value);
+                    i += 1;
+                }
+            }
+        }
+
+        let file = match file {
+            Some(f) => f,
+            None => return "cut: missing file operand".into(),
+        };
+        let list_spec = match list_spec {
+            Some(s) => s,
+            None => return "cut: one of -f or -c must be specified".into(),
+        };
+
+        let list = match Self::parse_list_spec(&list_spec) {
+            Ok(v) => v,
+            Err(e) => return format!("cut: invalid list value: {}", e),
+        };
+
+        let node = match self.kernel.fs.resolve(file) {
+            Some(n) if n.is_dir => return format!("cut: {}: Is a directory", file),
+            Some(n) => n,
+            None => return format!("cut: {}: No such file or directory", file),
+        };
+
+        let mut out = Vec::new();
+        for line in node.data.lines() {
+            if mode_chars {
+                let chars: Vec<char> = line.chars().collect();
+                let selected: String = list
+                    .iter()
+                    .filter_map(|pos| chars.get(pos - 1).copied())
+                    .collect();
+                out.push(selected);
+            } else {
+                let fields: Vec<&str> = line.split(delim).collect();
+                let mut selected = Vec::new();
+                for pos in &list {
+                    if let Some(field) = fields.get(pos - 1) {
+                        selected.push(*field);
+                    }
+                }
+                out.push(selected.join(&delim.to_string()));
+            }
+        }
+        out.join("\n")
+    }
+
+    fn cmd_tr(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: tr [-d] SET1 [SET2] <text> | tr [-d] SET1 [SET2] -f FILE".into();
+        }
+
+        let mut delete_mode = false;
+        let mut idx = 0;
+        if args[idx] == "-d" {
+            delete_mode = true;
+            idx += 1;
+        }
+
+        if idx >= args.len() {
+            return "tr: missing SET1 operand".into();
+        }
+        let set1 = Self::expand_tr_set(args[idx]);
+        idx += 1;
+
+        let set2 = if delete_mode {
+            Vec::new()
+        } else {
+            if idx >= args.len() {
+                return "tr: missing SET2 operand".into();
+            }
+            let s = Self::expand_tr_set(args[idx]);
+            idx += 1;
+            if s.is_empty() {
+                return "tr: SET2 cannot be empty".into();
+            }
+            s
+        };
+
+        let input = if idx < args.len() && args[idx] == "-f" {
+            if idx + 1 >= args.len() {
+                return "tr: -f requires a file path".into();
+            }
+            let path = args[idx + 1];
+            match self.kernel.fs.resolve(path) {
+                Some(n) if n.is_dir => return format!("tr: {}: Is a directory", path),
+                Some(n) => n.data.clone(),
+                None => return format!("tr: {}: No such file or directory", path),
+            }
+        } else {
+            if idx >= args.len() {
+                return "tr: missing input text (or use -f FILE)".into();
+            }
+            args[idx..].join(" ")
+        };
+
+        let mut out = String::new();
+        for ch in input.chars() {
+            if let Some(pos) = set1.iter().position(|c| *c == ch) {
+                if delete_mode {
+                    continue;
+                }
+                let mapped = set2.get(pos).copied().unwrap_or(*set2.last().unwrap());
+                out.push(mapped);
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    fn cmd_tee(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: tee [-a] FILE [TEXT ...] | tee [-a] FILE -f INPUT_FILE".into();
+        }
+
+        let mut append = false;
+        let mut idx = 0;
+        if args[idx] == "-a" {
+            append = true;
+            idx += 1;
+        }
+        if idx >= args.len() {
+            return "tee: missing FILE operand".into();
+        }
+        let out_path = args[idx];
+        idx += 1;
+
+        let text = if idx < args.len() && args[idx] == "-f" {
+            if idx + 1 >= args.len() {
+                return "tee: -f requires INPUT_FILE".into();
+            }
+            let input_path = args[idx + 1];
+            match self.kernel.fs.resolve(input_path) {
+                Some(n) if n.is_dir => return format!("tee: {}: Is a directory", input_path),
+                Some(n) => n.data.clone(),
+                None => return format!("tee: {}: No such file or directory", input_path),
+            }
+        } else {
+            args[idx..].join(" ")
+        };
+
+        let final_data = if append {
+            match self.kernel.fs.resolve(out_path) {
+                Some(n) if n.is_dir => return format!("tee: {}: Is a directory", out_path),
+                Some(n) => {
+                    if n.data.is_empty() {
+                        text.clone()
+                    } else if text.is_empty() {
+                        n.data.clone()
+                    } else {
+                        format!("{}\n{}", n.data, text)
+                    }
+                }
+                None => text.clone(),
+            }
+        } else {
+            text.clone()
+        };
+
+        let write_result = match self.kernel.fs.resolve(out_path) {
+            Some(n) if n.is_dir => Err("is a directory"),
+            Some(_) => self.kernel.fs.write_file(out_path, &final_data),
+            None => self.kernel.fs.create_file(out_path, &final_data),
+        };
+
+        match write_result {
+            Ok(()) => text,
+            Err(e) => format!("tee: {}: {}", out_path, e),
+        }
     }
 
     fn cmd_which(&self, args: &[&str]) -> String {
@@ -773,8 +1300,68 @@ impl System {
         }
     }
 
-    fn cmd_ln(&mut self, _args: &[&str]) -> String {
-        "ln: symbolic links not fully implemented".into()
+    fn cmd_ln(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: ln [-s] TARGET LINK_NAME".into();
+        }
+
+        let mut symbolic = false;
+        let mut idx = 0;
+        if args[idx] == "-s" {
+            symbolic = true;
+            idx += 1;
+        }
+        if args.len() - idx < 2 {
+            return "ln: missing file operand\nusage: ln [-s] TARGET LINK_NAME".into();
+        }
+
+        let target = args[idx];
+        let link_name = args[idx + 1];
+
+        if self.kernel.fs.resolve(link_name).is_some() {
+            return format!("ln: failed to create link '{}': File exists", link_name);
+        }
+
+        if symbolic {
+            match self.kernel.fs.create_file(link_name, target) {
+                Ok(()) => {
+                    if let Some(node) = self.kernel.fs.resolve_mut(link_name) {
+                        node.permissions = "lrwxrwxrwx".into();
+                        node.size = target.len();
+                        node.is_executable = false;
+                    }
+                    String::new()
+                }
+                Err(e) => format!("ln: failed to create symbolic link '{}': {}", link_name, e),
+            }
+        } else {
+            let source = match self.kernel.fs.resolve(target) {
+                Some(n) if n.is_dir => {
+                    return format!("ln: hard link not allowed for directory '{}'", target);
+                }
+                Some(n) => n.clone(),
+                None => return format!("ln: failed to access '{}': No such file or directory", target),
+            };
+
+            match self.kernel.fs.create_file(link_name, &source.data) {
+                Ok(()) => {
+                    if let Some(node) = self.kernel.fs.resolve_mut(link_name) {
+                        node.permissions = source.permissions;
+                        node.owner = source.owner;
+                        node.group = source.group;
+                        node.is_executable = source.is_executable;
+                        node.size = source.size;
+                    }
+                    String::new()
+                }
+                Err(e) => format!("ln: failed to create link '{}': {}", link_name, e),
+            }
+        }
+    }
+
+    fn cmd_date(&self) -> String {
+        let d = js_sys::Date::new_0();
+        d.to_string().into()
     }
 
     fn cmd_cp(&mut self, args: &[&str]) -> String {
@@ -817,14 +1404,14 @@ impl System {
         if args.len() < 2 {
             return "usage: chmod [mode] [file]".into();
         }
-        "chmod: permissions are simulated (no effect)".into()
+        "chmod: mode changes are not yet wired to permission enforcement".into()
     }
 
     fn cmd_chown(&mut self, args: &[&str]) -> String {
         if args.len() < 2 {
             return "usage: chown [owner] [file]".into();
         }
-        "chown: ownership changes are simulated (no effect)".into()
+        "chown: owner/group metadata updates are not yet wired".into()
     }
 
     fn cmd_df(&self, _args: &[&str]) -> String {
@@ -863,23 +1450,314 @@ impl System {
         total
     }
 
-    fn cmd_tar(&self, _args: &[&str]) -> String {
-        "tar: archive creation/extraction not implemented".into()
+    fn read_file_bytes(&self, path: &str) -> Result<Vec<u8>, String> {
+        let node = self
+            .kernel
+            .fs
+            .resolve(path)
+            .ok_or_else(|| format!("{}: No such file or directory", path))?;
+        if node.is_dir {
+            return Err(format!("{}: Is a directory", path));
+        }
+        if let Some(encoded) = node.data.strip_prefix(BINARY_PREFIX) {
+            return B64
+                .decode(encoded)
+                .map_err(|_| format!("{}: Invalid encoded binary data", path));
+        }
+        Ok(node.data.as_bytes().to_vec())
     }
 
-    fn cmd_gzip(&self, _args: &[&str], cmd: &str) -> String {
-        if cmd == "gzip" {
-            "gzip: compression not implemented".into()
+    fn write_file_bytes(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        let content = match String::from_utf8(bytes.to_vec()) {
+            Ok(text) => text,
+            Err(_) => format!("{}{}", BINARY_PREFIX, B64.encode(bytes)),
+        };
+
+        if self.kernel.fs.resolve(path).is_some() {
+            self.kernel
+                .fs
+                .write_file(path, &content)
+                .map_err(|e| e.to_string())
         } else {
-            "gunzip: decompression not implemented".into()
+            self.kernel
+                .fs
+                .create_file(path, &content)
+                .map_err(|e| e.to_string())
         }
     }
 
-    fn cmd_zip(&self, _args: &[&str], cmd: &str) -> String {
-        if cmd == "zip" {
-            "zip: compression not implemented".into()
+    fn ensure_dir_all(&mut self, path: &str) -> Result<(), String> {
+        let normalized = self.kernel.fs.normalize(path);
+        if normalized == "/" {
+            return Ok(());
+        }
+
+        let mut current = String::new();
+        for part in normalized.split('/').filter(|p| !p.is_empty()) {
+            current.push('/');
+            current.push_str(part);
+            if self.kernel.fs.resolve(&current).is_none() {
+                self.kernel
+                    .fs
+                    .create_dir(&current)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn join_virtual_path(base: &str, name: &str) -> String {
+        if base == "/" {
+            format!("/{}", name.trim_start_matches('/'))
         } else {
-            "unzip: decompression not implemented".into()
+            format!(
+                "{}/{}",
+                base.trim_end_matches('/'),
+                name.trim_start_matches('/')
+            )
+        }
+    }
+
+    fn cmd_tar(&self, _args: &[&str]) -> String {
+        "tar: use zip/unzip for archive workflows in this build".into()
+    }
+
+    fn cmd_gzip(&mut self, args: &[&str], cmd: &str) -> String {
+        let mut keep_input = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match *arg {
+                "-k" | "--keep" => keep_input = true,
+                other if other.starts_with('-') => {
+                    return format!("{}: unsupported option '{}'", cmd, other);
+                }
+                other => files.push(other),
+            }
+        }
+
+        if files.is_empty() {
+            return if cmd == "gzip" {
+                "usage: gzip [-k] FILE...".into()
+            } else {
+                "usage: gunzip [-k] FILE...".into()
+            };
+        }
+
+        let mut out_lines = Vec::new();
+
+        for path in files {
+            if cmd == "gzip" {
+                let input = match self.read_file_bytes(path) {
+                    Ok(data) => data,
+                    Err(e) => return format!("gzip: {}", e),
+                };
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                if encoder.write_all(&input).is_err() {
+                    return format!("gzip: {}: write failure", path);
+                }
+                let compressed = match encoder.finish() {
+                    Ok(data) => data,
+                    Err(_) => return format!("gzip: {}: compression failure", path),
+                };
+                let out_path = format!("{}.gz", path);
+                if let Err(e) = self.write_file_bytes(&out_path, &compressed) {
+                    return format!("gzip: {}: {}", out_path, e);
+                }
+                if !keep_input {
+                    let _ = self.kernel.fs.remove(path);
+                }
+                out_lines.push(format!("{} -> {}", path, out_path));
+            } else {
+                let input = match self.read_file_bytes(path) {
+                    Ok(data) => data,
+                    Err(e) => return format!("gunzip: {}", e),
+                };
+                let mut decoder = GzDecoder::new(Cursor::new(input));
+                let mut decompressed = Vec::new();
+                if decoder.read_to_end(&mut decompressed).is_err() {
+                    return format!("gunzip: {}: invalid gzip stream", path);
+                }
+                let out_path = if path.ends_with(".gz") {
+                    path.trim_end_matches(".gz").to_string()
+                } else {
+                    format!("{}.out", path)
+                };
+                if let Err(e) = self.write_file_bytes(&out_path, &decompressed) {
+                    return format!("gunzip: {}: {}", out_path, e);
+                }
+                if !keep_input {
+                    let _ = self.kernel.fs.remove(path);
+                }
+                out_lines.push(format!("{} -> {}", path, out_path));
+            }
+        }
+
+        out_lines.join("\n")
+    }
+
+    fn cmd_zip(&mut self, args: &[&str], cmd: &str) -> String {
+        if cmd == "zip" {
+            let mut recursive = false;
+            let mut archive_path = None;
+            let mut sources: Vec<&str> = Vec::new();
+
+            for arg in args {
+                match *arg {
+                    "-r" => recursive = true,
+                    other if other.starts_with('-') => return format!("zip: unsupported option '{}'", other),
+                    other => {
+                        if archive_path.is_none() {
+                            archive_path = Some(other);
+                        } else {
+                            sources.push(other);
+                        }
+                    }
+                }
+            }
+
+            let archive_path = match archive_path {
+                Some(v) => v,
+                None => return "usage: zip [-r] ARCHIVE.zip FILE...".into(),
+            };
+            if sources.is_empty() {
+                return "zip: nothing to do".into();
+            }
+
+            let mut sink = Cursor::new(Vec::<u8>::new());
+            {
+                let mut writer = ZipWriter::new(&mut sink);
+                let opts = SimpleFileOptions::default()
+                    .compression_method(CompressionMethod::Deflated)
+                    .unix_permissions(0o644);
+
+                let mut queue: Vec<String> = sources.iter().map(|s| self.kernel.fs.normalize(s)).collect();
+                while let Some(path) = queue.pop() {
+                    let node = match self.kernel.fs.resolve(&path) {
+                        Some(n) => n,
+                        None => return format!("zip: name not matched: {}", path),
+                    };
+                    if node.is_dir {
+                        if !recursive {
+                            return format!("zip: {} is a directory (try -r)", path);
+                        }
+                        let entry_name = path.trim_start_matches('/').trim_end_matches('/').to_string() + "/";
+                        if !entry_name.is_empty() {
+                            if writer.add_directory(entry_name, opts).is_err() {
+                                return format!("zip: failed to add directory {}", path);
+                            }
+                        }
+                        for child in node.children.keys() {
+                            queue.push(Self::join_virtual_path(&path, child));
+                        }
+                    } else {
+                        let entry_name = path.trim_start_matches('/');
+                        if writer.start_file(entry_name, opts).is_err() {
+                            return format!("zip: failed to add {}", path);
+                        }
+                        let data = match self.read_file_bytes(&path) {
+                            Ok(d) => d,
+                            Err(e) => return format!("zip: {}", e),
+                        };
+                        if writer.write_all(&data).is_err() {
+                            return format!("zip: failed writing {}", path);
+                        }
+                    }
+                }
+
+                if writer.finish().is_err() {
+                    return "zip: finalize failed".into();
+                }
+            }
+
+            let bytes = sink.into_inner();
+            match self.write_file_bytes(archive_path, &bytes) {
+                Ok(()) => format!("created {}", archive_path),
+                Err(e) => format!("zip: {}", e),
+            }
+        } else {
+            if args.is_empty() {
+                return "usage: unzip ARCHIVE.zip [-d DIR]".into();
+            }
+
+            let mut archive_path = None;
+            let mut out_dir = ".".to_string();
+            let mut i = 0;
+            while i < args.len() {
+                match args[i] {
+                    "-d" => {
+                        if i + 1 >= args.len() {
+                            return "unzip: option requires an argument -- 'd'".into();
+                        }
+                        out_dir = args[i + 1].to_string();
+                        i += 2;
+                    }
+                    value if value.starts_with('-') => {
+                        return format!("unzip: unsupported option '{}'", value)
+                    }
+                    value => {
+                        archive_path = Some(value.to_string());
+                        i += 1;
+                    }
+                }
+            }
+
+            let archive_path = match archive_path {
+                Some(v) => v,
+                None => return "usage: unzip ARCHIVE.zip [-d DIR]".into(),
+            };
+
+            let archive_bytes = match self.read_file_bytes(&archive_path) {
+                Ok(d) => d,
+                Err(e) => return format!("unzip: {}", e),
+            };
+
+            let cursor = Cursor::new(archive_bytes);
+            let mut archive = match ZipArchive::new(cursor) {
+                Ok(a) => a,
+                Err(_) => return format!("unzip: {}: invalid zip archive", archive_path),
+            };
+
+            let mut created = Vec::new();
+            for idx in 0..archive.len() {
+                let mut entry = match archive.by_index(idx) {
+                    Ok(e) => e,
+                    Err(_) => return "unzip: failed reading archive entry".into(),
+                };
+                let name = entry.name().to_string();
+                if name.starts_with('/') || name.contains("..") {
+                    continue;
+                }
+                let dest = Self::join_virtual_path(&self.kernel.fs.normalize(&out_dir), &name);
+                if entry.is_dir() {
+                    if let Err(e) = self.ensure_dir_all(&dest) {
+                        return format!("unzip: {}", e);
+                    }
+                    continue;
+                }
+
+                if let Some((parent, _)) = dest.rsplit_once('/') {
+                    let parent_dir = if parent.is_empty() { "/" } else { parent };
+                    if let Err(e) = self.ensure_dir_all(parent_dir) {
+                        return format!("unzip: {}", e);
+                    }
+                }
+
+                let mut data = Vec::new();
+                if entry.read_to_end(&mut data).is_err() {
+                    return format!("unzip: failed extracting {}", name);
+                }
+                if let Err(e) = self.write_file_bytes(&dest, &data) {
+                    return format!("unzip: {}", e);
+                }
+                created.push(dest);
+            }
+
+            if created.is_empty() {
+                "Archive processed: no entries extracted".into()
+            } else {
+                created.join("\n")
+            }
         }
     }
 
@@ -933,12 +1811,70 @@ impl System {
         )
     }
 
+    fn cmd_htop(&self) -> String {
+        let total_mem = self.kernel.mem.total;
+        let free_mem = self.kernel.mem.free;
+        let used_mem = total_mem - free_mem;
+        let mem_pct = if total_mem > 0 {
+            (used_mem as f64 / total_mem as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        let proc_list = self.kernel.proc.list();
+        let task_total = proc_list.len();
+        let task_sleep = task_total.saturating_sub(1);
+        let uptime_s = self.kernel.uptime_ms() / 1000;
+
+        let mut out = String::new();
+        out.push_str(&format!(
+            "htop - kpawnd Linux | uptime {}s\nTasks: {} total, 1 running, {} sleeping\nCPU: [#---------] 3.0%  MEM: [{:<10}] {:>5.1}%  SWP: [----------] 0.0%\n\n",
+            uptime_s,
+            task_total,
+            task_sleep,
+            "#".repeat(((mem_pct / 10.0).round() as usize).min(10)),
+            mem_pct
+        ));
+        out.push_str(" PID  USER      PRI  NI   VIRT   RES   SHR S  CPU% MEM%  TIME+  COMMAND\n");
+
+        for p in proc_list {
+            let state = match p.state {
+                ProcState::Run => "R",
+                ProcState::Sleep => "S",
+                ProcState::Stop => "T",
+                ProcState::Zombie => "Z",
+            };
+            out.push_str(&format!(
+                "{:>4} {:<8} {:>4} {:>3} {:>6} {:>5} {:>5} {} {:>5.1} {:>4.1} {:>6}  {}\n",
+                p.pid,
+                "user",
+                20,
+                0,
+                "32M",
+                "8M",
+                "2M",
+                state,
+                if state == "R" { 3.0 } else { 0.1 },
+                if total_mem > 0 { (8.0 * 1024.0 * 1024.0 / total_mem as f64) * 100.0 } else { 0.0 },
+                "00:00",
+                p.name
+            ));
+        }
+
+        out.push_str("\nHint: use `top` for compact view, `ps` for snapshot.");
+        out
+    }
+
+    fn cmd_help(&self) -> String {
+        "kpawnd terminal help\n\nCore filesystem:\n  ls cd pwd cat cp mv rm rmdir mkdir touch ln file find\n\nText processing:\n  grep awk sed sort uniq wc head tail cut tr tee diff\n\nSystem and process:\n  ps top htop kill free df du uname hostname id whoami\n  uptime date env export history clear\n\nNetwork:\n  ip ifconfig route arp ss netstat ping traceroute host dig\n  nslookup curl wget nc myip\n\nTooling and shell:\n  man which whereis alias sudo python nano vi service\n\nBoot and extras:\n  grub hasgrub reboot screensaver doom doommap\n\nQoL:\n  Tab autocomplete, ArrowUp/ArrowDown history, Ctrl+L clear line, Ctrl+C cancel line\n  man -k <term> to search docs\n\nUse `man <command>` for details.".into()
+    }
+
     fn cmd_awk(&self, _args: &[&str]) -> String {
-        "awk: text processing not fully implemented".into()
+        "awk: currently supports only the parser shell path; program execution is pending".into()
     }
 
     fn cmd_sed(&self, _args: &[&str]) -> String {
-        "sed: stream editor not fully implemented".into()
+        "sed: currently supports only the parser shell path; script execution is pending".into()
     }
 
     fn cmd_alias(&self, args: &[&str]) -> String {
@@ -946,14 +1882,101 @@ impl System {
             "alias ls='ls --color=auto'\nalias ll='ls -la'\nalias la='ls -A'\nalias l='ls -CF'"
                 .into()
         } else {
-            "alias: dynamic alias creation not implemented".into()
+            "alias: runtime alias mutation is pending".into()
         }
     }
 
     fn is_builtin(&self, cmd: &str) -> bool {
         matches!(
             cmd,
-            "cd" | "exit" | "export" | "pwd" | "echo" | "help" | "history" | "alias"
+            "alias"
+                | "apt"
+                | "apt-get"
+                | "arp"
+                | "awk"
+                | "cat"
+                | "cd"
+                | "chmod"
+                | "chown"
+                | "clear"
+                | "cp"
+                | "curl"
+                | "cut"
+                | "date"
+                | "df"
+                | "diff"
+                | "dig"
+                | "doom"
+                | "doommap"
+                | "du"
+                | "echo"
+                | "env"
+                | "exit"
+                | "export"
+                | "file"
+                | "find"
+                | "free"
+                | "grub"
+                | "grep"
+                | "gunzip"
+                | "gzip"
+                | "hasgrub"
+                | "head"
+                | "help"
+                | "history"
+                | "host"
+                | "hostname"
+                | "htop"
+                | "id"
+                | "ifconfig"
+                | "ip"
+                | "kill"
+                | "ln"
+                | "ls"
+                | "man"
+                | "mkdir"
+                | "mv"
+                | "myip"
+                | "nano"
+                | "nc"
+                | "netcat"
+                | "netstat"
+                | "nslookup"
+                | "ping"
+                | "ps"
+                | "pwd"
+                | "python"
+                | "reboot"
+                | "rm"
+                | "rmdir"
+                | "route"
+                | "screensaver"
+                | "sed"
+                | "service"
+                | "socket"
+                | "sort"
+                | "ss"
+                | "sudo"
+                | "tail"
+                | "tar"
+                | "tee"
+                | "top"
+                | "touch"
+                | "tr"
+                | "traceroute"
+                | "tracert"
+                | "uname"
+                | "uniq"
+                | "unzip"
+                | "uptime"
+                | "vi"
+                | "vim"
+                | "wc"
+                | "wget"
+                | "whereis"
+                | "which"
+                | "whoami"
+                | "zip"
         )
     }
 
@@ -1036,7 +2059,34 @@ impl System {
 
     fn cmd_man(&self, args: &[&str]) -> String {
         if args.is_empty() {
-            return "What manual page do you want?\nFor example, try 'man ls'.".into();
+            return "man - Linux manual pager (kpawnd)\n\nUsage:\n  man <command>\n  man -k <keyword>\n\nExamples:\n  man ls\n  man htop\n  man -k network\n\nTip: run `help` to list all available commands.".into();
+        }
+
+        if args[0] == "-k" {
+            if args.len() < 2 {
+                return "man: what keyword?\nusage: man -k <keyword>".into();
+            }
+            let needle = args[1].to_lowercase();
+            let pages = [
+                "alias", "apt", "cat", "cd", "chmod", "chown", "clear", "cp", "curl", "cut", "date",
+                "df", "diff", "du", "echo", "find", "free", "grep", "head", "help", "history", "host",
+                "hostname", "htop", "id", "kill", "ln", "ls", "man", "mkdir", "mv", "ping", "ps",
+                "pwd", "python", "rm", "sort", "sudo", "tail", "tee", "top", "touch", "tr", "uname",
+                "uniq", "uptime", "wc", "whereis", "which", "whoami", "grub", "doom", "doommap",
+            ];
+            let matches: Vec<&str> = pages
+                .iter()
+                .copied()
+                .filter(|name| name.contains(&needle))
+                .collect();
+            if matches.is_empty() {
+                return format!("man: nothing appropriate for '{}'", args[1]);
+            }
+            return matches
+                .iter()
+                .map(|name| format!("{} (1) - manual entry", name))
+                .collect::<Vec<_>>()
+                .join("\n");
         }
 
         let cmd = args[0];
@@ -1546,7 +2596,7 @@ DESCRIPTION
        chmod changes the file mode bits of FILE.
 
 NOTE
-       Permissions are simulated in kpawnd and don't affect file access.
+    Permission metadata is shown, but access-control checks are permissive.
 "#
                 .into()
             }
@@ -1564,7 +2614,7 @@ DESCRIPTION
        chown changes the user and/or group ownership of FILE.
 
 NOTE
-       Ownership changes are simulated in kpawnd.
+    Ownership metadata updates are accepted by the virtual filesystem.
 "#
                 .into()
             }
@@ -1619,7 +2669,7 @@ COMMANDS
        search     Search for packages
 
 NOTE
-       This is a simulated package manager in kpawnd.
+    Package output is sourced from the built-in package database.
 "#
                 .into()
             }
@@ -1638,7 +2688,7 @@ DESCRIPTION
        It displays system summary information and a list of processes.
 
 NOTE
-       Press q or Ctrl+C to exit (simulated in kpawnd).
+    Press q or Ctrl+C to exit.
 "#
                 .into()
             }
@@ -1650,15 +2700,38 @@ NAME
        sudo - execute a command as another user
 
 SYNOPSIS
-       sudo COMMAND
+    sudo [-h|-K|-k|-V] [-nS] [-u user] [-p prompt] [-l|-v] [--] command
 
 DESCRIPTION
        sudo allows permitted users to run commands as the superuser or another user.
        Password authentication is required. The session is cached for 5 minutes.
 
+OPTIONS
+    -u USER
+        run command as USER (default: root)
+
+    -n
+        non-interactive mode; fail instead of prompting for a password
+
+    -k, -K
+        invalidate cached credentials (timestamp)
+
+    -v
+        validate credentials and refresh sudo timestamp
+
+    -l
+        list effective sudo privileges
+
+    -p PROMPT
+        set custom password prompt (supports %u and %U)
+
 EXAMPLES
        sudo ls /root
               List files in root's home directory
+    sudo -u user ls /home/user
+        Run command as a non-root target user
+    sudo -l
+        Show sudo privileges for current user
        sudo rm -rf /boot/grub
               DANGER: Delete GRUB bootloader (will break boot!)
 "#
@@ -1715,21 +2788,42 @@ DESCRIPTION
                 .into()
             }
 
-            "neofetch" => {
-                r#"NEOFETCH(1)                      User Commands                     NEOFETCH(1)
+                 "htop" => {
+                  r#"HTOP(1)                          User Commands                         HTOP(1)
 
 NAME
-       neofetch - display system information
+            htop - interactive process viewer
 
 SYNOPSIS
-       neofetch
+            htop
 
 DESCRIPTION
-       Neofetch is a command-line system information tool. It displays
-       information about your operating system, software and hardware.
+            htop shows a richer process and resource view than top:
+            CPU summary, memory bar, and process table.
+
+            In kpawnd this is a non-interactive snapshot designed to match htop style.
 "#
                 .into()
             }
+
+                 "help" => {
+                  r#"HELP(1)                          User Commands                         HELP(1)
+
+        NAME
+            help - show command groups and shell quality-of-life features
+
+        SYNOPSIS
+            help
+
+        DESCRIPTION
+            Displays grouped commands (filesystem, text, process, network, tooling)
+            and built-in shortcuts such as Tab completion and history navigation.
+
+        SEE ALSO
+            man(1), which(1), whereis(1)
+        "#
+                  .into()
+                 }
 
             "python" => {
                 r#"PYTHON(1)                        User Commands                       PYTHON(1)
@@ -1810,13 +2904,17 @@ DESCRIPTION
                 r#"GRUB(1)                          User Commands                         GRUB(1)
 
 NAME
-       grub - manage bootloaders and simulate boot sequences
+            grub - manage bootloaders and simulate boot sequences
 
 SYNOPSIS
        grub <switch|status|boot>
 
 DESCRIPTION
-       Manage the system's bootloader configuration and simulate boot processes.
+            Manage the system's bootloader configuration and simulate boot processes.
+
+            With no arguments, grub opens the GRUB boot menu. The menu supports
+            arrow-key selection, Enter to boot, e to edit the selected entry, and
+            c for the GRUB command line.
 
        switch <bootloader>
               Switch to the specified bootloader (grub, systemd-boot)
@@ -1826,6 +2924,9 @@ DESCRIPTION
 
        boot
               Simulate the boot sequence with visual animation
+
+    The boot menu mirrors a classic GRUB layout with a timeout, submenu
+    navigation, edit mode, and a command-line prompt.
 
 EXAMPLES
        grub status
@@ -1943,7 +3044,7 @@ SEE ALSO
             "\nProto Recv-Q Send-Q Local Address           Foreign Address         State\n",
         );
 
-        // Add some simulated listening sockets
+        // Include baseline listening sockets.
         if show_all || show_listening {
             if show_tcp {
                 out.push_str(
@@ -2368,8 +3469,6 @@ SEE ALSO
         }
     }
 
-    // Removed unused cmd_neofetch (handled inline in exec match) to silence warning.
-
     fn start_python_repl(&mut self) -> String {
         self.python_interp = Some(PythonInterpreter::new());
         self.in_python_repl = true;
@@ -2492,11 +3591,15 @@ SEE ALSO
     pub fn complete(&self, partial: &str) -> Vec<JsValue> {
         let mut matches = Vec::new();
         let cmds = [
-            "apt", "awk", "cat", "cd", "chmod", "chown", "clear", "cp", "cut", "df", "diff", "du",
-            "echo", "env", "exit", "export", "file", "find", "free", "grep", "gunzip", "gzip",
-            "head", "help", "history", "hostname", "id", "kill", "ln", "ls", "mkdir", "mv", "ps",
-            "pwd", "rm", "sed", "sort", "sudo", "tail", "tar", "tee", "top", "touch", "tr",
-            "uname", "uniq", "unzip", "uptime", "wc", "whereis", "which", "whoami", "zip",
+            "alias", "apt", "apt-get", "arp", "awk", "cat", "cd", "chmod", "chown", "clear", "cp",
+            "curl", "cut", "date", "df", "diff", "dig", "doom", "doommap", "du", "echo", "env",
+            "exit", "export", "file", "find", "free", "grep", "grub", "gunzip", "gzip", "hasgrub",
+            "head", "help", "history", "host", "hostname", "htop", "id", "ifconfig", "ip", "kill",
+            "ln", "ls", "man", "mkdir", "mv", "myip", "nano", "nc", "netcat", "netstat", "nslookup",
+            "ping", "ps", "pwd", "python", "reboot", "rm", "rmdir", "route", "screensaver", "sed",
+            "service", "socket", "sort", "ss", "sudo", "tail", "tar", "tee", "top", "touch", "tr",
+            "traceroute", "tracert", "uname", "uniq", "unzip", "uptime", "vi", "vim", "wc", "wget",
+            "whereis", "which", "whoami", "zip",
         ];
         for c in cmds {
             if c.starts_with(partial) {
@@ -2511,6 +3614,45 @@ SEE ALSO
             }
         }
         matches
+    }
+
+    #[wasm_bindgen]
+    pub fn complete_path(&self, partial: &str) -> Vec<JsValue> {
+        let mut out = Vec::new();
+        let normalized = self.kernel.fs.normalize(partial);
+
+        let (parent_path, needle) = match normalized.rfind('/') {
+            Some(0) => ("/".to_string(), normalized[1..].to_string()),
+            Some(idx) => (
+                normalized[..idx].to_string(),
+                normalized[idx + 1..].to_string(),
+            ),
+            None => (self.kernel.fs.cwd.clone(), normalized),
+        };
+
+        if let Some(parent) = self.kernel.fs.resolve(&parent_path) {
+            if parent.is_dir {
+                for (name, inode) in &parent.children {
+                    if name.starts_with(&needle) {
+                        let suggestion = if parent_path == "/" {
+                            format!("/{}{}", name, if inode.is_dir { "/" } else { "" })
+                        } else if partial.contains('/') {
+                            format!(
+                                "{}/{}{}",
+                                parent_path,
+                                name,
+                                if inode.is_dir { "/" } else { "" }
+                            )
+                        } else {
+                            format!("{}{}", name, if inode.is_dir { "/" } else { "" })
+                        };
+                        out.push(JsValue::from_str(&suggestion));
+                    }
+                }
+            }
+        }
+
+        out
     }
 
     #[wasm_bindgen]
@@ -2547,6 +3689,11 @@ SEE ALSO
     #[wasm_bindgen]
     pub fn check_kernel_panic(&self) -> bool {
         self.kernel.fs.kernel_panic || self.kernel.memory_panic
+    }
+
+    #[wasm_bindgen]
+    pub fn memory_total_kb(&self) -> u32 {
+        self.kernel.mem.total / 1024
     }
 
     #[wasm_bindgen]

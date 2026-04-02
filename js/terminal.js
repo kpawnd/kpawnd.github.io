@@ -1,7 +1,6 @@
-import { getState, setSystem, setPythonRepl, setNanoEditor, getNanoEditor, getPythonRepl, getLoginStage, setLoginStage, getUser, setSudoPending, getSudoPending } from './state.js';
-import { print, scrollToBottom, escapeHtml } from './dom.js';
+import { getState, setPythonRepl, getNanoEditor, getPythonRepl, getLoginStage, setLoginStage, getUser } from './state.js';
+import { print, scrollToBottom, escapeHtml, renderColorTokens } from './dom.js';
 import { saveUserInfo } from './storage.js';
-import { displayNeofetch } from './neofetch.js';
 import { launchNanoEditor } from './nano.js';
 import { showKernelPanic } from './panic.js';
 import { saveUserFiles } from './storage.js';
@@ -10,12 +9,20 @@ import { doCurl, doPing, doDns, doMyIp, fetchUrl } from './network.js';
 let commandHistory = [];
 let historyIndex = -1;
 let passwordBuffer = '';
+let lastTabInput = '';
+let lastTabAt = 0;
 
 let start_doom;
 let start_doom_with_difficulty;
 let doom_enable_procedural;
 let doom_restore_original_map;
 let start_screensaver;
+
+function setPromptText(text) {
+  const promptEl = document.getElementById('prompt');
+  if (!promptEl) return;
+  promptEl.innerHTML = text.includes('\x1b[COLOR:') ? renderColorTokens(text) : escapeHtml(text);
+}
 
 export function initTerminal(wasm) {
   start_doom = wasm.start_doom;
@@ -25,7 +32,7 @@ export function initTerminal(wasm) {
   doom_restore_original_map = wasm.doom_restore_original_map;
 }
 
-function showGraceBootSequence(messages) {
+function showBootSequence(messages) {
   // Clear screen before showing boot sequence
   document.getElementById('output').innerHTML = '';
 
@@ -36,8 +43,7 @@ function showGraceBootSequence(messages) {
       // Boot complete - clear screen immediately and setup terminal
       document.getElementById('output').innerHTML = '';
       // Setup terminal like normal boot
-      const promptEl = document.getElementById('prompt');
-      if (promptEl) promptEl.textContent = getState().system.prompt();
+      setPromptText(getState().system.prompt());
       return;
     }
 
@@ -92,7 +98,7 @@ export function setupTerminal() {
       print(`Hello ${user.username}!`, 'output');
       state.greeted = true;
     }
-    prompt.textContent = state.system.prompt();
+    setPromptText(state.system.prompt());
   }
 
   input.addEventListener('keydown', handleTerminalKey);
@@ -137,9 +143,34 @@ export function handleTerminalKey(e) {
   }
 
   switch (e.key) {
+    case 'c':
+    case 'C':
+      if (e.ctrlKey) {
+        e.preventDefault();
+        input.value = '';
+        passwordBuffer = '';
+        print('^C', 'info');
+        if (!getPythonRepl()) {
+          setPromptText(state.system.prompt());
+        }
+        scrollToBottom();
+      }
+      break;
+
+    case 'l':
+    case 'L':
+      if (e.ctrlKey) {
+        e.preventDefault();
+        document.getElementById('output').innerHTML = '';
+        if (!getPythonRepl()) {
+          setPromptText(state.system.prompt());
+        }
+      }
+      break;
+
     case 'Enter':
       e.preventDefault();
-      const val = isPasswordMode ? passwordBuffer : input.value;
+      let val = isPasswordMode ? passwordBuffer : input.value;
       input.value = '';
       passwordBuffer = '';
       
@@ -159,6 +190,9 @@ export function handleTerminalKey(e) {
         handleLoginInput(val);
         break;
       }
+      if (val.trim() && !isPasswordMode) {
+        val = expandHistoryShortcut(val);
+      }
       if (val.trim()) {
         if (!commandHistory.length || commandHistory[commandHistory.length - 1] !== val) {
           commandHistory.push(val);
@@ -171,7 +205,7 @@ export function handleTerminalKey(e) {
 
     case 'Tab':
       e.preventDefault();
-      if (!getPythonRepl()) autocomplete(input.value);
+      if (!getPythonRepl()) autocomplete(input);
       break;
 
     case 'ArrowUp':
@@ -202,7 +236,7 @@ export function handleTerminalKey(e) {
 function startLogin() {
   setLoginStage('username');
   print('login:', 'output');
-  document.getElementById('prompt').textContent = '';
+  setPromptText('');
 }
 
 function handleLoginInput(text) {
@@ -222,7 +256,7 @@ function handleLoginInput(text) {
     setLoginStage('done');
     print(`Hello ${username}!`, 'output');
     // Restore normal prompt
-    document.getElementById('prompt').textContent = getState().system.prompt();
+    setPromptText(getState().system.prompt());
   }
 }
 
@@ -255,13 +289,11 @@ export async function handleCommand(cmd) {
     document.getElementById('output').innerHTML = '';
   } else if (result === '\x1b[EXIT]') {
     print('logout', 'info');
-  } else if (result === '\x1b[NEOFETCH_DATA]') {
-    displayNeofetch();
   } else if (result === '\x1b[PYTHON_REPL]') {
     setPythonRepl(true);
     print('Python 3.11.0 (sandboxed, Rust-backed)', 'info');
     print('Type "exit()" to exit', 'info');
-    document.getElementById('prompt').textContent = '>>> ';
+    setPromptText('>>> ');
   } else if (result.startsWith('\x1b[DOOM_ENABLE_PROC]')) {
     if (typeof doom_enable_procedural === 'function') {
       doom_enable_procedural();
@@ -290,34 +322,13 @@ export async function handleCommand(cmd) {
   } else if (result.startsWith('\x1b[LAUNCH_SCREENSAVER]')) {
     start_screensaver();
   } else if (result.startsWith('\x1b[BOOT_SEQUENCE:')) {
-    // Handle boot sequence animation for Grace Desktop terminals
+    // Handle boot sequence animation
     const messagesStr = result.slice(16, -1); // Remove \x1b[BOOT_SEQUENCE: and ]
     const messages = messagesStr.split('|');
-    showGraceBootSequence(messages);
+    showBootSequence(messages);
   } else if (result === '\x1b[LAUNCH_GRUB]') {
     // Show GRUB menu
     import('./grub.js').then(module => module.showGrub());
-  } else if (result.startsWith('\x1b[LAUNCH_GRACE]')) {
-    try {
-      // Use the Rust-based Desktop now
-      if (window.GraceDesktop && window.GraceDesktop.launch) {
-        window.GraceDesktop.launch();
-        // Hide terminal UI while desktop is active
-        const term = document.getElementById('terminal');
-        if (term) term.style.display = 'none';
-        // Allow returning to terminal via event
-        document.addEventListener('GRACE:OPEN_TERMINAL', () => {
-          const termEl = document.getElementById('terminal');
-          if (termEl) termEl.style.display = '';
-          const root = document.querySelector('.grace-root');
-          if (root) root.style.display = 'none';
-        }, { once: true });
-      } else {
-        print('Grace Desktop not available', 'error');
-      }
-    } catch (e) {
-      print(`Failed to launch Grace: ${e}`, 'error');
-    }
   }
   if (result.startsWith('\x1b[FETCH:')) {
     await fetchUrl(result.slice(8, -1));
@@ -366,10 +377,10 @@ export async function handleCommand(cmd) {
   } catch (_) {}
   
   if (!getPythonRepl() && !nanoEditor && !waitingSudo) {
-    document.getElementById('prompt').textContent = system.prompt();
+    setPromptText(system.prompt());
   } else if (waitingSudo) {
     // Clear prompt when waiting for sudo password (Linux-style)
-    document.getElementById('prompt').textContent = '';
+    setPromptText('');
   }
   scrollToBottom();
 }
@@ -383,7 +394,7 @@ function handlePythonInput(code) {
   
   if (result === '\x1b[EXIT_PYTHON]') {
     setPythonRepl(false);
-    document.getElementById('prompt').textContent = system.prompt();
+    setPromptText(system.prompt());
   } else if (result) {
     print(result, 'output');
   }
@@ -391,16 +402,76 @@ function handlePythonInput(code) {
 }
 
 function autocomplete(partial) {
+  const input = partial;
+  const value = input.value;
+  const cursor = input.selectionStart ?? value.length;
+  const beforeCursor = value.slice(0, cursor);
+
+  if (!beforeCursor || /\s$/.test(beforeCursor)) {
+    return;
+  }
+
   const state = getState();
   const system = state.system;
-  const parts = partial.split(' ');
-  const word = parts[parts.length - 1];
-  const completions = system.complete(word);
+  const parts = beforeCursor.split(/\s+/);
+  const currentToken = parts[parts.length - 1] || '';
+  const isFirstToken = parts.length === 1;
+  const completions = isFirstToken
+    ? system.complete(currentToken)
+    : system.complete_path(currentToken);
+
+  if (!completions || completions.length === 0) {
+    return;
+  }
 
   if (completions.length === 1) {
-    parts[parts.length - 1] = completions[0];
-    document.getElementById('input').value = parts.join(' ');
-  } else if (completions.length > 1) {
-    print(completions.join('  '), 'info');
+    const replacement = completions[0];
+    input.value = value.slice(0, cursor - currentToken.length) + replacement + value.slice(cursor);
+    const pos = cursor - currentToken.length + replacement.length;
+    input.setSelectionRange(pos, pos);
+    return;
   }
+
+  const prefix = longestCommonPrefix(completions);
+  if (prefix.length > currentToken.length) {
+    input.value = value.slice(0, cursor - currentToken.length) + prefix + value.slice(cursor);
+    const pos = cursor - currentToken.length + prefix.length;
+    input.setSelectionRange(pos, pos);
+    return;
+  }
+
+  const now = Date.now();
+  const isSecondTab = lastTabInput === beforeCursor && now - lastTabAt < 1200;
+  lastTabInput = beforeCursor;
+  lastTabAt = now;
+  if (isSecondTab) {
+    print(completions.join('  '), 'info');
+    scrollToBottom();
+  }
+}
+
+function expandHistoryShortcut(value) {
+  const trimmed = value.trim();
+  if (trimmed === '!!') {
+    return commandHistory.length ? commandHistory[commandHistory.length - 1] : value;
+  }
+  if (/^!\d+$/.test(trimmed)) {
+    const idx = parseInt(trimmed.slice(1), 10) - 1;
+    if (idx >= 0 && idx < commandHistory.length) {
+      return commandHistory[idx];
+    }
+  }
+  return value;
+}
+
+function longestCommonPrefix(items) {
+  if (!items || items.length === 0) return '';
+  let prefix = items[0];
+  for (let i = 1; i < items.length; i++) {
+    while (!items[i].startsWith(prefix) && prefix.length > 0) {
+      prefix = prefix.slice(0, -1);
+    }
+    if (!prefix) break;
+  }
+  return prefix;
 }

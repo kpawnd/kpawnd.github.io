@@ -15,9 +15,10 @@ function drainBootLines(messages, index) {
   if (index >= messages.length) {
     // Boot complete
     setTimeout(() => {
+      // Always clear boot logs before entering login shell.
+      getElement('output').innerHTML = '';
       if (state.system.post_boot_clear_needed()) {
         state.system.acknowledge_post_boot();
-        getElement('output').innerHTML = '';
       }
       setupTerminal();
     }, 2000);

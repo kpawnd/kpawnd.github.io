@@ -1,0 +1,32 @@
+#bios {
+    position: fixed;
+    inset: 0;
+    display: none;
+    background: #000000;
+    color: #c7c7c7;
+    overflow: hidden;
+    z-index: 5000;
+}
+
+#bios-logo {
+    position: absolute;
+    top: 10px;
+    left: 8px;
+    width: 220px;
+    height: auto;
+    image-rendering: auto;
+    filter: brightness(0) saturate(100%) invert(18%) sepia(95%) saturate(4623%) hue-rotate(347deg) brightness(92%) contrast(118%);
+}
+
+#bios pre {
+    margin: 0;
+    padding: 100px 8px 8px 8px;
+    width: 100vw;
+    height: 100vh;
+    white-space: pre;
+    overflow: hidden;
+    font-family: "IBM VGA 8x16", "Perfect DOS VGA 437", "PxPlus IBM VGA9", "Lucida Console", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 0.95;
+    letter-spacing: 0;
+}

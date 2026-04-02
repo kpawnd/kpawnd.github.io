@@ -9,12 +9,9 @@ export const state = {
   nanoEditor: null,
   pythonRepl: false,
   terminalSetup: false,
-  commandHistory: [],
-  historyIndex: -1,
   user: { username: null, password: null },
   loginStage: null,
-  greeted: false,
-  sudoPending: null
+  greeted: false
 };
 
 export function getState() {
@@ -74,12 +71,4 @@ export function setLoginStage(stage) {
 
 export function getLoginStage() {
   return state.loginStage;
-}
-
-export function setSudoPending(cmd) {
-  state.sudoPending = cmd;
-}
-
-export function getSudoPending() {
-  return state.sudoPending;
 }

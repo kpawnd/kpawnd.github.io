@@ -16,19 +16,13 @@ wasm-bindgen-futures = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 js-sys = "0.3"
+base64 = "0.22"
+flate2 = "1.0"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 web-sys = { version = "0.3", features = [
     "console",
     "WebSocket",
-    "MessageEvent",
-    "ErrorEvent",
-    "CloseEvent",
     "BinaryType",
-    "RtcPeerConnection",
-    "RtcDataChannel",
-    "RtcSessionDescriptionInit",
-    "RtcSdpType",
-    "RtcPeerConnectionIceEvent",
-    "RtcSessionDescription",
     "Request",
     "RequestInit",
     "RequestMode",
