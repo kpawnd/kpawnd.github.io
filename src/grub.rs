@@ -132,9 +132,7 @@ impl GrubMenu {
         output.push('\n');
         output.push_str("      Minimum Emacs-like screen editing is supported. TAB lists\n");
         output.push_str("      completions. Press Ctrl-x or F10 to boot, Ctrl-c or F2 for\n");
-        output.push_str(
-            "      a command line, or ESC to discard edits and return to the menu.\n",
-        );
+        output.push_str("      a command line, or ESC to discard edits and return to the menu.\n");
 
         output
     }
@@ -146,8 +144,10 @@ impl GrubMenu {
         output.push('\n');
         output.push_str("                            GNU GRUB  version 2.06\n");
         output.push('\n');
-        output.push_str("   Minimal BASH-like line editing is supported. For the first word, TAB\n");
-        output.push_str("   lists possible command completions. Anywhere else TAB lists possible\n");
+        output
+            .push_str("   Minimal BASH-like line editing is supported. For the first word, TAB\n");
+        output
+            .push_str("   lists possible command completions. Anywhere else TAB lists possible\n");
         output.push_str("   device or file completions. Press ESC to return to the menu.\n");
         output.push('\n');
         output.push_str(&format!("grub> {}\n", self.cmdline_buffer));

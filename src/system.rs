@@ -169,11 +169,24 @@ impl System {
         }
         match cmd {
             "reboot" => "\x1b[REBOOT]".into(),
-            "echo" => { let out=args.join(" "); if out=="github" { format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap()) } else { out } }
+            "echo" => {
+                let out = args.join(" ");
+                if out == "github" {
+                    format!("\x1b[OPEN:{}]", self.shell.env.get("GITHUB").unwrap())
+                } else {
+                    out
+                }
+            }
             "help" => self.cmd_help(),
             "man" => self.cmd_man(args),
             "nano" | "vi" | "vim" => self.cmd_nano(args),
-            "python" => { if args.is_empty() { self.start_python_repl() } else { "python: script execution not supported".to_string() } }
+            "python" => {
+                if args.is_empty() {
+                    self.start_python_repl()
+                } else {
+                    "python: script execution not supported".to_string()
+                }
+            }
             "doom" => {
                 // Parse optional difficulty argument: easy|normal|hard or 0|1|2
                 if !args.is_empty() {
@@ -191,7 +204,7 @@ impl System {
                     }
                 }
                 "\x1b[LAUNCH_DOOM]".to_string()
-            },
+            }
             "doommap" => {
                 if args.is_empty() {
                     return "usage: doommap <proc|restore>".into();
@@ -201,7 +214,7 @@ impl System {
                     "restore" => "\x1b[DOOM_RESTORE]".into(),
                     _ => "usage: doommap <proc|restore>".into(),
                 }
-            },
+            }
             "screensaver" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
             "wget" => self.cmd_wget(args),
             "curl" => self.cmd_curl(args),
@@ -283,7 +296,13 @@ impl System {
             "arp" => self.cmd_arp(args),
             "host" | "nslookup" | "dig" => self.cmd_host(args),
             "nc" | "netcat" => self.cmd_nc(args),
-            "hasgrub" => if self.has_grub() { "yes".into() } else { "no".into() },
+            "hasgrub" => {
+                if self.has_grub() {
+                    "yes".into()
+                } else {
+                    "no".into()
+                }
+            }
             "grub" => {
                 if args.is_empty() {
                     return "\x1b[LAUNCH_GRUB]".into();
@@ -301,7 +320,10 @@ impl System {
                     "status" => {
                         let current = self.boot.get_current_bootloader();
                         let available = self.boot.list_bootloaders().join(", ");
-                        format!("Current bootloader: {}\nAvailable bootloaders: {}", current, available)
+                        format!(
+                            "Current bootloader: {}\nAvailable bootloaders: {}",
+                            current, available
+                        )
                     }
                     "boot" => {
                         let messages = self.boot.simulate_boot_sequence(&mut self.kernel.mem);
@@ -485,7 +507,8 @@ impl System {
                 self.sudo_authenticated_until = Some(now + SUDO_TIMEOUT_MS);
                 return String::new();
             }
-            return self.exec_sudo_internal(parsed.command.as_deref().unwrap_or(""), &parsed.target_user);
+            return self
+                .exec_sudo_internal(parsed.command.as_deref().unwrap_or(""), &parsed.target_user);
         }
 
         if parsed.non_interactive {
@@ -757,7 +780,12 @@ impl System {
                     Ok(()) => {}
                     Err(e) => return format!("rmdir: failed to remove '{}': {}", dir, e),
                 },
-                None => return format!("rmdir: failed to remove '{}': No such file or directory", dir),
+                None => {
+                    return format!(
+                        "rmdir: failed to remove '{}': No such file or directory",
+                        dir
+                    )
+                }
             }
         }
         String::new()
@@ -1340,7 +1368,12 @@ impl System {
                     return format!("ln: hard link not allowed for directory '{}'", target);
                 }
                 Some(n) => n.clone(),
-                None => return format!("ln: failed to access '{}': No such file or directory", target),
+                None => {
+                    return format!(
+                        "ln: failed to access '{}': No such file or directory",
+                        target
+                    )
+                }
             };
 
             match self.kernel.fs.create_file(link_name, &source.data) {
@@ -1605,7 +1638,9 @@ impl System {
             for arg in args {
                 match *arg {
                     "-r" => recursive = true,
-                    other if other.starts_with('-') => return format!("zip: unsupported option '{}'", other),
+                    other if other.starts_with('-') => {
+                        return format!("zip: unsupported option '{}'", other)
+                    }
                     other => {
                         if archive_path.is_none() {
                             archive_path = Some(other);
@@ -1631,7 +1666,10 @@ impl System {
                     .compression_method(CompressionMethod::Deflated)
                     .unix_permissions(0o644);
 
-                let mut queue: Vec<String> = sources.iter().map(|s| self.kernel.fs.normalize(s)).collect();
+                let mut queue: Vec<String> = sources
+                    .iter()
+                    .map(|s| self.kernel.fs.normalize(s))
+                    .collect();
                 while let Some(path) = queue.pop() {
                     let node = match self.kernel.fs.resolve(&path) {
                         Some(n) => n,
@@ -1641,11 +1679,14 @@ impl System {
                         if !recursive {
                             return format!("zip: {} is a directory (try -r)", path);
                         }
-                        let entry_name = path.trim_start_matches('/').trim_end_matches('/').to_string() + "/";
-                        if !entry_name.is_empty() {
-                            if writer.add_directory(entry_name, opts).is_err() {
-                                return format!("zip: failed to add directory {}", path);
-                            }
+                        let entry_name = path
+                            .trim_start_matches('/')
+                            .trim_end_matches('/')
+                            .to_string()
+                            + "/";
+                        if !entry_name.is_empty() && writer.add_directory(entry_name, opts).is_err()
+                        {
+                            return format!("zip: failed to add directory {}", path);
                         }
                         for child in node.children.keys() {
                             queue.push(Self::join_virtual_path(&path, child));
@@ -1855,7 +1896,11 @@ impl System {
                 "2M",
                 state,
                 if state == "R" { 3.0 } else { 0.1 },
-                if total_mem > 0 { (8.0 * 1024.0 * 1024.0 / total_mem as f64) * 100.0 } else { 0.0 },
+                if total_mem > 0 {
+                    (8.0 * 1024.0 * 1024.0 / total_mem as f64) * 100.0
+                } else {
+                    0.0
+                },
                 "00:00",
                 p.name
             ));
@@ -2068,11 +2113,12 @@ impl System {
             }
             let needle = args[1].to_lowercase();
             let pages = [
-                "alias", "apt", "cat", "cd", "chmod", "chown", "clear", "cp", "curl", "cut", "date",
-                "df", "diff", "du", "echo", "find", "free", "grep", "head", "help", "history", "host",
-                "hostname", "htop", "id", "kill", "ln", "ls", "man", "mkdir", "mv", "ping", "ps",
-                "pwd", "python", "rm", "sort", "sudo", "tail", "tee", "top", "touch", "tr", "uname",
-                "uniq", "uptime", "wc", "whereis", "which", "whoami", "grub", "doom", "doommap",
+                "alias", "apt", "cat", "cd", "chmod", "chown", "clear", "cp", "curl", "cut",
+                "date", "df", "diff", "du", "echo", "find", "free", "grep", "head", "help",
+                "history", "host", "hostname", "htop", "id", "kill", "ln", "ls", "man", "mkdir",
+                "mv", "ping", "ps", "pwd", "python", "rm", "sort", "sudo", "tail", "tee", "top",
+                "touch", "tr", "uname", "uniq", "uptime", "wc", "whereis", "which", "whoami",
+                "grub", "doom", "doommap",
             ];
             let matches: Vec<&str> = pages
                 .iter()
@@ -2788,8 +2834,8 @@ DESCRIPTION
                 .into()
             }
 
-                 "htop" => {
-                  r#"HTOP(1)                          User Commands                         HTOP(1)
+            "htop" => {
+                r#"HTOP(1)                          User Commands                         HTOP(1)
 
 NAME
             htop - interactive process viewer
@@ -2806,8 +2852,8 @@ DESCRIPTION
                 .into()
             }
 
-                 "help" => {
-                  r#"HELP(1)                          User Commands                         HELP(1)
+            "help" => {
+                r#"HELP(1)                          User Commands                         HELP(1)
 
         NAME
             help - show command groups and shell quality-of-life features
@@ -2822,8 +2868,8 @@ DESCRIPTION
         SEE ALSO
             man(1), which(1), whereis(1)
         "#
-                  .into()
-                 }
+                .into()
+            }
 
             "python" => {
                 r#"PYTHON(1)                        User Commands                       PYTHON(1)
@@ -3591,15 +3637,94 @@ SEE ALSO
     pub fn complete(&self, partial: &str) -> Vec<JsValue> {
         let mut matches = Vec::new();
         let cmds = [
-            "alias", "apt", "apt-get", "arp", "awk", "cat", "cd", "chmod", "chown", "clear", "cp",
-            "curl", "cut", "date", "df", "diff", "dig", "doom", "doommap", "du", "echo", "env",
-            "exit", "export", "file", "find", "free", "grep", "grub", "gunzip", "gzip", "hasgrub",
-            "head", "help", "history", "host", "hostname", "htop", "id", "ifconfig", "ip", "kill",
-            "ln", "ls", "man", "mkdir", "mv", "myip", "nano", "nc", "netcat", "netstat", "nslookup",
-            "ping", "ps", "pwd", "python", "reboot", "rm", "rmdir", "route", "screensaver", "sed",
-            "service", "socket", "sort", "ss", "sudo", "tail", "tar", "tee", "top", "touch", "tr",
-            "traceroute", "tracert", "uname", "uniq", "unzip", "uptime", "vi", "vim", "wc", "wget",
-            "whereis", "which", "whoami", "zip",
+            "alias",
+            "apt",
+            "apt-get",
+            "arp",
+            "awk",
+            "cat",
+            "cd",
+            "chmod",
+            "chown",
+            "clear",
+            "cp",
+            "curl",
+            "cut",
+            "date",
+            "df",
+            "diff",
+            "dig",
+            "doom",
+            "doommap",
+            "du",
+            "echo",
+            "env",
+            "exit",
+            "export",
+            "file",
+            "find",
+            "free",
+            "grep",
+            "grub",
+            "gunzip",
+            "gzip",
+            "hasgrub",
+            "head",
+            "help",
+            "history",
+            "host",
+            "hostname",
+            "htop",
+            "id",
+            "ifconfig",
+            "ip",
+            "kill",
+            "ln",
+            "ls",
+            "man",
+            "mkdir",
+            "mv",
+            "myip",
+            "nano",
+            "nc",
+            "netcat",
+            "netstat",
+            "nslookup",
+            "ping",
+            "ps",
+            "pwd",
+            "python",
+            "reboot",
+            "rm",
+            "rmdir",
+            "route",
+            "screensaver",
+            "sed",
+            "service",
+            "socket",
+            "sort",
+            "ss",
+            "sudo",
+            "tail",
+            "tar",
+            "tee",
+            "top",
+            "touch",
+            "tr",
+            "traceroute",
+            "tracert",
+            "uname",
+            "uniq",
+            "unzip",
+            "uptime",
+            "vi",
+            "vim",
+            "wc",
+            "wget",
+            "whereis",
+            "which",
+            "whoami",
+            "zip",
         ];
         for c in cmds {
             if c.starts_with(partial) {
