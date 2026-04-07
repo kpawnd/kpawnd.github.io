@@ -1,4 +1,12 @@
 const HOLD_MS = 7000;
+const PROBE_TIMEOUT_MS = 250;
+const DEVICE_ESTIMATE_CACHE_KEY = 'kp_bios_device_estimate_v1';
+
+function timeoutAfter(ms, fallbackValue) {
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve(fallbackValue), ms);
+  });
+}
 
 function nowBiosDateString() {
   const d = new Date();
@@ -23,28 +31,239 @@ function detectCpuModel() {
 
 function detectCpuSpeedMhz() {
   const cores = Math.max(1, navigator.hardwareConcurrency || 1);
-  return String(1800 + cores * 200);
+  const deviceMemoryGb = Math.max(2, Number(navigator.deviceMemory || 0));
+  return String(1500 + cores * 180 + deviceMemoryGb * 120);
 }
 
-function buildAutoProfile(totalMemoryKb) {
+function fnv1a32(input) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function seededPick(items, seed, shift = 0) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  return items[(seed >>> shift) % items.length];
+}
+
+function getWebglRenderer() {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return 'unknown-gpu';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!ext) return 'webgl-gpu';
+    const renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+    return renderer || 'webgl-gpu';
+  } catch {
+    return 'unknown-gpu';
+  }
+}
+
+function getHardwareSignals(totalMemoryKb) {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const ua = navigator.userAgent || 'unknown-ua';
+  const platform = navigator.platform || 'unknown-platform';
+  const vendor = navigator.vendor || 'unknown-vendor';
   const locale = navigator.language || 'en-US';
+  const cores = Math.max(1, navigator.hardwareConcurrency || 1);
+  const memoryGb = Math.max(1, Number(navigator.deviceMemory || 0));
+  const screenInfo = `${window.screen?.width || 0}x${window.screen?.height || 0}x${window.screen?.colorDepth || 0}`;
+  const gpu = getWebglRenderer();
+
   return {
-    vendor: 'AMIBIOS',
-    biosVersion: '08.00.15',
+    ua,
+    platform,
+    vendor,
+    locale,
+    tz,
+    cores,
+    memoryGb,
+    totalMemoryKb: Number(totalMemoryKb) || 0,
+    screenInfo,
+    gpu,
     cpuModel: detectCpuModel(),
-    cpuSpeedMhz: detectCpuSpeedMhz(),
-    usbSummary: `${Math.max(2, navigator.hardwareConcurrency || 2)} Device(s)`,
-    sataPort1: `VFS_DISK_${locale}`,
-    sataPort2: `VFS_DISK_${tz.replace(/\//g, '_')}`,
-    totalMemoryKb: Number(totalMemoryKb) || 0
+    cpuSpeedMhz: detectCpuSpeedMhz()
+  };
+}
+
+function createBiosIdentity(signals) {
+  const fingerprint = [
+    signals.ua,
+    signals.platform,
+    signals.vendor,
+    signals.locale,
+    signals.tz,
+    signals.cores,
+    signals.memoryGb,
+    signals.screenInfo,
+    signals.gpu,
+    signals.totalMemoryKb
+  ].join('|');
+  const seed = fnv1a32(fingerprint);
+
+  const biosVersion = [
+    5 + (seed % 5),
+    String((seed >>> 6) % 100).padStart(2, '0'),
+    String((seed >>> 14) % 100).padStart(2, '0')
+  ].join('.');
+
+  const brand = [
+    String((seed >>> 1) % 100).padStart(2, '0'),
+    String((seed >>> 9) % 10000).padStart(4, '0')
+  ].join('');
+
+  const dateStamp = nowBiosDateString().slice(0, 8).replace(/\//g, '');
+  const oemCode = [
+    String((seed >>> 2) % 100).padStart(2, '0'),
+    String((seed >>> 11) % 10000).padStart(4, '0'),
+    String(((seed ^ 0xa5a5a5a5) >>> 0) % 100000000).padStart(8, '0'),
+    String(((seed ^ 0x5a5a5a5a) >>> 0) % 100000000).padStart(8, '0'),
+    dateStamp,
+    String((seed >>> 3) % 1000000).padStart(6, '0')
+  ].join('-');
+
+  return {
+    vendorName: `${signals.vendor || 'OEM'} Firmware`,
+    biosVersion,
+    brand,
+    oemCode
+  };
+}
+
+async function getStorageProfile(seed) {
+  let quotaBytes = 0;
+  try {
+    if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+      const estimate = await navigator.storage.estimate();
+      quotaBytes = Number(estimate?.quota || 0);
+    }
+  } catch {
+    // Ignore blocked storage estimate API.
+  }
+
+  const minGiB = 64;
+  const maxGiB = 2048;
+  const estimatedGiB = quotaBytes > 0
+    ? Math.max(minGiB, Math.min(maxGiB, Math.floor(quotaBytes / (1024 ** 3))))
+    : 128 + ((seed >>> 7) % 512);
+
+  const family = seededPick(['SN', 'PM', 'MX', 'KC', 'WD', 'EVO', 'XG'], seed, 3);
+  const suffix = String(100 + ((seed >>> 13) % 900));
+  const sataPort1 = `${family}${suffix} SSD ${estimatedGiB}GB`;
+
+  const hasSecondary = ((seed >>> 5) & 0x1) === 1;
+  const sataPort2 = hasSecondary
+    ? `${seededPick(['ST', 'TOS', 'MAT'], seed, 17)} DVD-ROM`
+    : 'Not Detected';
+
+  return { sataPort1, sataPort2 };
+}
+
+async function getGrantedCount(getter) {
+  try {
+    const devices = await Promise.race([
+      getter(),
+      timeoutAfter(PROBE_TIMEOUT_MS, null)
+    ]);
+    return Array.isArray(devices) ? devices.length : null;
+  } catch {
+    return null;
+  }
+}
+
+async function detectConnectedDeviceStats() {
+  const usbCount = navigator.usb && typeof navigator.usb.getDevices === 'function'
+    ? await getGrantedCount(() => navigator.usb.getDevices())
+    : null;
+
+  const hidCount = navigator.hid && typeof navigator.hid.getDevices === 'function'
+    ? await getGrantedCount(() => navigator.hid.getDevices())
+    : null;
+
+  const serialCount = navigator.serial && typeof navigator.serial.getPorts === 'function'
+    ? await getGrantedCount(() => navigator.serial.getPorts())
+    : null;
+
+  let mediaCount = 0;
+  let gamepadCount = 0;
+
+  try {
+    if (typeof navigator.getGamepads === 'function') {
+      const pads = Array.from(navigator.getGamepads() || []).filter(Boolean);
+      gamepadCount = pads.length;
+    }
+  } catch {
+    // Ignore unsupported gamepad API.
+  }
+
+  try {
+    if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function') {
+      const devices = await Promise.race([
+        navigator.mediaDevices.enumerateDevices(),
+        timeoutAfter(PROBE_TIMEOUT_MS, [])
+      ]);
+      mediaCount = Array.isArray(devices) ? devices.length : 0;
+    }
+  } catch {
+    // Ignore blocked media device enumeration.
+  }
+
+  const trustedBusCount = [usbCount, hidCount, serialCount]
+    .filter((v) => Number.isInteger(v) && v >= 0)
+    .reduce((sum, v) => sum + v, 0);
+
+  const broadCount = mediaCount + gamepadCount;
+  return { trustedBusCount, broadCount };
+}
+
+async function buildAutoProfile(totalMemoryKb) {
+  const signals = getHardwareSignals(totalMemoryKb);
+  const identity = createBiosIdentity(signals);
+  const storage = await getStorageProfile(fnv1a32([identity.oemCode, signals.platform, signals.ua].join('|')));
+  const stats = await detectConnectedDeviceStats();
+
+  // Calibrate to old POST-era wording: prefer concrete granted-device counts,
+  // blend in broad I/O signals only as a soft estimate when direct buses are absent.
+  const fallbackBaseline = Math.max(2, Math.min(10, 2 + Math.floor(signals.cores / 2) + Math.floor(signals.memoryGb / 4)));
+  const estimatedUsbDevices = stats.trustedBusCount > 0
+    ? stats.trustedBusCount
+    : stats.broadCount > 0
+      ? Math.max(2, Math.floor(stats.broadCount * 0.6))
+      : fallbackBaseline;
+
+  let stableDeviceEstimate = estimatedUsbDevices;
+  try {
+    const cachedValue = Number(window.localStorage.getItem(DEVICE_ESTIMATE_CACHE_KEY));
+    if (Number.isFinite(cachedValue) && cachedValue > 0) {
+      // Keep output stable while still adapting when a clearly higher count appears.
+      stableDeviceEstimate = Math.max(Math.floor((cachedValue + estimatedUsbDevices) / 2), estimatedUsbDevices);
+    }
+    window.localStorage.setItem(DEVICE_ESTIMATE_CACHE_KEY, String(stableDeviceEstimate));
+  } catch {
+    // Ignore storage access restrictions.
+  }
+
+  return {
+    vendor: identity.vendorName,
+    biosVersion: identity.biosVersion,
+    cpuModel: signals.cpuModel,
+    cpuSpeedMhz: signals.cpuSpeedMhz,
+    usbSummary: `${stableDeviceEstimate} Device(s)`,
+    sataPort1: storage.sataPort1,
+    sataPort2: storage.sataPort2,
+    totalMemoryKb: signals.totalMemoryKb,
+    biosBrand: identity.brand,
+    oemCode: identity.oemCode
   };
 }
 
 function createBiosLines(profile) {
-  const oemCode = '62-0100-001131-00101111-040226-440BX';
   return [
-    `AMIBIOS(C)2026 American Megatrends, Inc.`,
+    `${profile.biosBrand} BIOS(C)2026 Compatible Firmware`,
     `${profile.vendor} Version ${profile.biosVersion}`,
     `BIOS Date: ${nowBiosDateString()}`,
     '',
@@ -68,7 +287,7 @@ function createBiosLines(profile) {
     '',
     'Boot from Hard Disk...',
     '',
-    oemCode
+    profile.oemCode
   ];
 }
 
@@ -79,27 +298,29 @@ function setScreenVisible(id, visible, display = 'block') {
 }
 
 export function showBiosScreen(onComplete, options = {}) {
-  const system = options.system;
-  const totalMemoryKb = system && typeof system.memory_total_kb === 'function'
-    ? system.memory_total_kb()
-    : 0;
-  const profile = buildAutoProfile(totalMemoryKb);
-  const biosLines = createBiosLines(profile);
+  (async () => {
+    const system = options.system;
+    const totalMemoryKb = system && typeof system.memory_total_kb === 'function'
+      ? system.memory_total_kb()
+      : 0;
+    const profile = await buildAutoProfile(totalMemoryKb);
+    const biosLines = createBiosLines(profile);
 
-  const bios = document.getElementById('bios');
-  const pre = document.querySelector('#bios pre');
-  if (!bios || !pre) {
-    onComplete();
-    return;
-  }
+    const bios = document.getElementById('bios');
+    const pre = document.querySelector('#bios pre');
+    if (!bios || !pre) {
+      onComplete();
+      return;
+    }
 
-  setScreenVisible('terminal', false);
-  setScreenVisible('grub', false);
-  setScreenVisible('bios', true);
-  pre.textContent = biosLines.join('\n');
+    setScreenVisible('terminal', false);
+    setScreenVisible('grub', false);
+    setScreenVisible('bios', true);
+    pre.textContent = biosLines.join('\n');
 
-  window.setTimeout(() => {
-    setScreenVisible('bios', false);
-    onComplete();
-  }, HOLD_MS);
+    window.setTimeout(() => {
+      setScreenVisible('bios', false);
+      onComplete();
+    }, HOLD_MS);
+  })();
 }

@@ -1,4 +1,5 @@
 pub mod boot;
+pub mod cpp_accel;
 pub mod doom;
 pub mod graphics;
 #[cfg(feature = "webgl")]

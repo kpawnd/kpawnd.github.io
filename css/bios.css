@@ -10,9 +10,9 @@
 
 #bios-logo {
     position: absolute;
-    top: 10px;
-    left: 8px;
-    width: 220px;
+    top: 18px;
+    left: 16px;
+    width: min(38vw, 620px);
     height: auto;
     image-rendering: auto;
     filter: brightness(0) saturate(100%) invert(18%) sepia(95%) saturate(4623%) hue-rotate(347deg) brightness(92%) contrast(118%);
@@ -20,13 +20,13 @@
 
 #bios pre {
     margin: 0;
-    padding: 100px 8px 8px 8px;
+    padding: clamp(110px, 15vh, 220px) 18px 10px 18px;
     width: 100vw;
     height: 100vh;
     white-space: pre;
     overflow: hidden;
     font-family: "IBM VGA 8x16", "Perfect DOS VGA 437", "PxPlus IBM VGA9", "Lucida Console", "Courier New", monospace;
-    font-size: 12px;
-    line-height: 0.95;
+    font-size: clamp(16px, 1.65vw, 30px);
+    line-height: 1.06;
     letter-spacing: 0;
 }

@@ -34,6 +34,7 @@ impl ProgramRegistry {
 pub struct Shell {
     pub history: Vec<String>,
     pub env: HashMap<String, String>,
+    pub aliases: HashMap<String, String>,
     pub registry: ProgramRegistry,
 }
 impl Default for Shell {
@@ -44,13 +45,18 @@ impl Default for Shell {
 impl Shell {
     pub fn new() -> Self {
         let mut env = HashMap::new();
+        let mut aliases = HashMap::new();
         env.insert("HOME".into(), "/home/user".into());
         env.insert("PATH".into(), "/bin".into());
         env.insert("USER".into(), "user".into());
         env.insert("GITHUB".into(), "https://github.com/kpawnd".into());
+        aliases.insert("ll".into(), "ls -la".into());
+        aliases.insert("la".into(), "ls -A".into());
+        aliases.insert("l".into(), "ls -CF".into());
         Shell {
             history: Vec::new(),
             env,
+            aliases,
             registry: ProgramRegistry::new(),
         }
     }

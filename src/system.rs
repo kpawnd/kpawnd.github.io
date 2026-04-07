@@ -15,6 +15,8 @@ use wasm_bindgen::prelude::*;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
+mod linux;
+
 const SUDO_TIMEOUT_MS: f64 = 300000.0;
 const BINARY_PREFIX: &str = "__BIN_B64__:";
 
@@ -36,6 +38,19 @@ struct SudoInvocation {
     list_privileges: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobState {
+    Running,
+    Stopped,
+}
+
+struct ShellJob {
+    id: u32,
+    pid: u32,
+    command: String,
+    state: JobState,
+}
+
 #[wasm_bindgen]
 pub struct System {
     boot: BootManager,
@@ -51,6 +66,8 @@ pub struct System {
     sudo_pending_request: Option<SudoPendingRequest>,
     sudo_waiting_password: bool,
     sudo_authenticated_until: Option<f64>,
+    jobs: Vec<ShellJob>,
+    next_job_id: u32,
 }
 
 impl Default for System {
@@ -77,6 +94,8 @@ impl System {
             sudo_pending_request: None,
             sudo_waiting_password: false,
             sudo_authenticated_until: None,
+            jobs: Vec::new(),
+            next_job_id: 1,
         };
 
         // Auto-start system services
@@ -151,7 +170,61 @@ impl System {
             }
             return "sudo: authentication state is invalid; try again".into();
         }
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+
+        if let Some(bg_cmd) = trimmed.strip_suffix('&') {
+            let cmdline = bg_cmd.trim();
+            if cmdline.is_empty() {
+                return "sh: syntax error near unexpected token `&'".into();
+            }
+            return self.spawn_background_job(cmdline, false);
+        }
+
+        if let Some((cmd_part, out_path, append)) = Self::split_output_redirection(trimmed) {
+            let output = self.exec(cmd_part);
+            let existing = if append {
+                self.kernel
+                    .fs
+                    .resolve(out_path)
+                    .map(|n| n.data.clone())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let final_data = if append && !existing.is_empty() && !output.is_empty() {
+                format!("{}\n{}", existing, output)
+            } else if append {
+                format!("{}{}", existing, output)
+            } else {
+                output
+            };
+
+            let write_res = if self.kernel.fs.resolve(out_path).is_some() {
+                self.kernel.fs.write_file(out_path, &final_data)
+            } else {
+                self.kernel.fs.create_file(out_path, &final_data)
+            };
+
+            return match write_res {
+                Ok(()) => String::new(),
+                Err(e) => format!("sh: {}: {}", out_path, e),
+            };
+        }
+
+        if let Some((lhs, in_path)) = Self::split_input_redirection(trimmed) {
+            let merged = if lhs.trim().is_empty() {
+                format!("cat {}", in_path)
+            } else {
+                format!("{} {}", lhs.trim(), in_path)
+            };
+            return self.exec(&merged);
+        }
+
+        if trimmed.contains('|') {
+            return self.exec_pipeline(trimmed);
+        }
+
+        let expanded = self.expand_alias_line(trimmed);
+        let parts: Vec<&str> = expanded.split_whitespace().collect();
         if parts.is_empty() {
             return String::new();
         }
@@ -180,13 +253,7 @@ impl System {
             "help" => self.cmd_help(),
             "man" => self.cmd_man(args),
             "nano" | "vi" | "vim" => self.cmd_nano(args),
-            "python" => {
-                if args.is_empty() {
-                    self.start_python_repl()
-                } else {
-                    "python: script execution not supported".to_string()
-                }
-            }
+            "python" => self.cmd_python(args),
             "doom" => {
                 // Parse optional difficulty argument: easy|normal|hard or 0|1|2
                 if !args.is_empty() {
@@ -226,6 +293,7 @@ impl System {
             "grep" => self.cmd_grep(args),
             "find" => self.cmd_find(args),
             "wc" => self.cmd_wc(args),
+            "cksum" => self.cmd_cksum(args),
             "head" => self.cmd_head(args),
             "tail" => self.cmd_tail(args),
             "diff" => self.cmd_diff(args),
@@ -253,6 +321,8 @@ impl System {
             "awk" => self.cmd_awk(args),
             "sed" => self.cmd_sed(args),
             "alias" => self.cmd_alias(args),
+            "unalias" => self.cmd_unalias(args),
+            "source" | "." => self.cmd_source(args),
             "touch" => self.cmd_touch(args),
             "mkdir" => self.cmd_mkdir(args),
             "rmdir" => self.cmd_rmdir(args),
@@ -261,23 +331,25 @@ impl System {
             "exit" => "\x1b[EXIT]".into(),
             "ps" => self.cmd_ps(),
             "kill" => self.cmd_kill(args),
+            "jobs" => self.cmd_jobs(args),
+            "bg" => self.cmd_bg(args),
+            "fg" => self.cmd_fg(args),
+            "disown" => self.cmd_disown(args),
+            "nohup" => self.cmd_nohup(args),
             "uname" => self.cmd_uname(args),
             "hostname" => self.cmd_hostname(),
-            "id" => {
-                let user = self
-                    .shell
-                    .env
-                    .get("USER")
-                    .cloned()
-                    .unwrap_or_else(|| "user".into());
-                format!("uid=1000({}) gid=1000({})", user, user)
-            }
+            "id" => self.cmd_id(args),
+            "groups" => self.cmd_groups(args),
+            "who" => self.cmd_who(args),
             "whoami" => self
                 .shell
                 .env
                 .get("USER")
                 .cloned()
                 .unwrap_or_else(|| "user".into()),
+            "stat" => self.cmd_stat(args),
+            "mount" => self.cmd_mount(args),
+            "umount" => self.cmd_umount(args),
             "uptime" => format!("up {}ms", self.kernel.uptime_ms()),
             "date" => self.cmd_date(),
             "free" => self.cmd_free(),
@@ -908,6 +980,23 @@ impl System {
         }
     }
 
+    fn cmd_cksum(&self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: cksum FILE...".into();
+        }
+
+        let mut lines = Vec::new();
+        for path in args {
+            let data = match self.read_file_bytes(path) {
+                Ok(data) => data,
+                Err(e) => return format!("cksum: {}", e),
+            };
+            let sum = crate::cpp_accel::crc32(&data);
+            lines.push(format!("{} {} {}", sum, data.len(), path));
+        }
+        lines.join("\n")
+    }
+
     fn cmd_head(&self, args: &[&str]) -> String {
         let (n, file) = if args.len() >= 2 && args[0] == "-n" {
             (args[1].parse().unwrap_or(10), args.get(2).copied())
@@ -1291,6 +1380,9 @@ impl System {
             return "usage: which [command]".into();
         }
         let cmd = args[0];
+        if let Some(alias) = self.shell.aliases.get(cmd) {
+            return format!("{}: aliased to {}", cmd, alias);
+        }
         if self.shell.registry.has(cmd) || self.is_builtin(cmd) {
             format!("/usr/bin/{}", cmd)
         } else {
@@ -1431,20 +1523,6 @@ impl System {
             Some(_) => "mv: cannot move directory".into(),
             None => format!("mv: cannot stat '{}': No such file or directory", args[0]),
         }
-    }
-
-    fn cmd_chmod(&mut self, args: &[&str]) -> String {
-        if args.len() < 2 {
-            return "usage: chmod [mode] [file]".into();
-        }
-        "chmod: mode changes are not yet wired to permission enforcement".into()
-    }
-
-    fn cmd_chown(&mut self, args: &[&str]) -> String {
-        if args.len() < 2 {
-            return "usage: chown [owner] [file]".into();
-        }
-        "chown: owner/group metadata updates are not yet wired".into()
     }
 
     fn cmd_df(&self, _args: &[&str]) -> String {
@@ -1911,24 +1989,334 @@ impl System {
     }
 
     fn cmd_help(&self) -> String {
-        "kpawnd terminal help\n\nCore filesystem:\n  ls cd pwd cat cp mv rm rmdir mkdir touch ln file find\n\nText processing:\n  grep awk sed sort uniq wc head tail cut tr tee diff\n\nSystem and process:\n  ps top htop kill free df du uname hostname id whoami\n  uptime date env export history clear\n\nNetwork:\n  ip ifconfig route arp ss netstat ping traceroute host dig\n  nslookup curl wget nc myip\n\nTooling and shell:\n  man which whereis alias sudo python nano vi service\n\nBoot and extras:\n  grub hasgrub reboot screensaver doom doommap\n\nQoL:\n  Tab autocomplete, ArrowUp/ArrowDown history, Ctrl+L clear line, Ctrl+C cancel line\n  man -k <term> to search docs\n\nUse `man <command>` for details.".into()
+        "kpawnd terminal help\n\nCore filesystem:\n  ls cd pwd cat cp mv rm rmdir mkdir touch ln file find stat\n  chmod chown mount umount\n\nText processing:\n  grep awk sed sort uniq wc cksum head tail cut tr tee diff\n\nSystem and process:\n  ps top htop kill jobs bg fg disown nohup free df du\n  uname hostname id groups who whoami uptime date env export history clear\n\nNetwork:\n  ip ifconfig route arp ss netstat ping traceroute host dig\n  nslookup curl wget nc myip\n\nTooling and shell:\n  man which whereis alias unalias source sudo python nano vi service\n\nBoot and extras:\n  grub hasgrub reboot screensaver doom doommap\n\nQoL:\n  Tab autocomplete, ArrowUp/ArrowDown history, Ctrl+L clear line, Ctrl+C cancel line\n  man -k <term> to search docs\n\nUse `man <command>` for details.".into()
     }
 
-    fn cmd_awk(&self, _args: &[&str]) -> String {
-        "awk: currently supports only the parser shell path; program execution is pending".into()
-    }
-
-    fn cmd_sed(&self, _args: &[&str]) -> String {
-        "sed: currently supports only the parser shell path; script execution is pending".into()
-    }
-
-    fn cmd_alias(&self, args: &[&str]) -> String {
-        if args.is_empty() {
-            "alias ls='ls --color=auto'\nalias ll='ls -la'\nalias la='ls -A'\nalias l='ls -CF'"
-                .into()
-        } else {
-            "alias: runtime alias mutation is pending".into()
+    fn cmd_awk(&self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: awk [-F DELIM] '{print ...}' FILE".into();
         }
+
+        let mut idx = 0;
+        let mut delim: Option<char> = None;
+        if args.get(idx) == Some(&"-F") {
+            let Some(v) = args.get(idx + 1) else {
+                return "awk: option -F requires an argument".into();
+            };
+            delim = v.chars().next();
+            idx += 2;
+        }
+
+        let Some(program) = args.get(idx) else {
+            return "usage: awk [-F DELIM] '{print ...}' FILE".into();
+        };
+        let Some(file) = args.get(idx + 1) else {
+            return "awk: missing FILE operand".into();
+        };
+
+        let Some(node) = self.kernel.fs.resolve(file) else {
+            return format!("awk: {}: No such file or directory", file);
+        };
+        if node.is_dir {
+            return format!("awk: {}: Is a directory", file);
+        }
+
+        let prog = program.trim();
+        let mut expr = prog;
+        if prog.starts_with('{') && prog.ends_with('}') && prog.len() >= 2 {
+            expr = &prog[1..prog.len() - 1];
+        }
+        expr = expr.trim();
+
+        if !expr.starts_with("print") {
+            return "awk: only print program is supported (for now)".into();
+        }
+
+        let print_expr = expr.strip_prefix("print").unwrap_or("").trim();
+        let fields: Vec<&str> = if print_expr.is_empty() {
+            Vec::new()
+        } else {
+            print_expr.split(',').map(|s| s.trim()).collect()
+        };
+
+        let mut out = Vec::new();
+        for line in node.data.lines() {
+            let cols: Vec<&str> = if let Some(d) = delim {
+                line.split(d).collect()
+            } else {
+                line.split_whitespace().collect()
+            };
+
+            if fields.is_empty() {
+                out.push(line.to_string());
+                continue;
+            }
+
+            let mut rendered = Vec::new();
+            for token in &fields {
+                if let Some(num) = token.strip_prefix('$') {
+                    if let Ok(idx1) = num.parse::<usize>() {
+                        if idx1 > 0 {
+                            rendered.push(cols.get(idx1 - 1).copied().unwrap_or("").to_string());
+                        }
+                    }
+                } else {
+                    rendered.push(token.trim_matches('"').trim_matches('\'').to_string());
+                }
+            }
+            out.push(rendered.join(" "));
+        }
+
+        out.join("\n")
+    }
+
+    fn cmd_sed(&mut self, args: &[&str]) -> String {
+        if args.len() < 2 {
+            return "usage: sed [-i] 's/old/new/[g]' FILE".into();
+        }
+
+        let mut idx = 0;
+        let mut inplace = false;
+        if args.get(idx) == Some(&"-i") {
+            inplace = true;
+            idx += 1;
+        }
+
+        let Some(script) = args.get(idx) else {
+            return "sed: missing script".into();
+        };
+        let Some(file) = args.get(idx + 1) else {
+            return "sed: missing FILE operand".into();
+        };
+
+        let Some((pattern, replacement, global)) = Self::parse_sed_subst(script) else {
+            return "sed: supported form is s/old/new/[g]".into();
+        };
+
+        let Some(node) = self.kernel.fs.resolve(file) else {
+            return format!("sed: {}: No such file or directory", file);
+        };
+        if node.is_dir {
+            return format!("sed: {}: Is a directory", file);
+        }
+
+        let transformed = node
+            .data
+            .lines()
+            .map(|line| {
+                if global {
+                    line.replace(&pattern, &replacement)
+                } else {
+                    line.replacen(&pattern, &replacement, 1)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if inplace {
+            match self.kernel.fs.write_file(file, &transformed) {
+                Ok(()) => String::new(),
+                Err(e) => format!("sed: {}: {}", file, e),
+            }
+        } else {
+            transformed
+        }
+    }
+
+    fn cmd_alias(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            let mut items: Vec<(&String, &String)> = self.shell.aliases.iter().collect();
+            items.sort_by(|a, b| a.0.cmp(b.0));
+            return items
+                .into_iter()
+                .map(|(k, v)| format!("alias {}='{}'", k, v))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+
+        let mut errors = Vec::new();
+        for arg in args {
+            if let Some((name, value)) = arg.split_once('=') {
+                let key = name.trim();
+                if key.is_empty() || key.contains(' ') {
+                    errors.push(format!("alias: `{}`: invalid alias name", key));
+                    continue;
+                }
+                let mut val = value.trim().to_string();
+                if (val.starts_with('"') && val.ends_with('"'))
+                    || (val.starts_with('\'') && val.ends_with('\''))
+                {
+                    val = val[1..val.len() - 1].to_string();
+                }
+                self.shell.aliases.insert(key.to_string(), val);
+            } else if let Some(v) = self.shell.aliases.get(*arg) {
+                return format!("alias {}='{}'", arg, v);
+            } else {
+                errors.push(format!("alias: {}: not found", arg));
+            }
+        }
+
+        if errors.is_empty() {
+            String::new()
+        } else {
+            errors.join("\n")
+        }
+    }
+
+    fn cmd_unalias(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: unalias NAME...".into();
+        }
+        let mut errors = Vec::new();
+        for name in args {
+            if self.shell.aliases.remove(*name).is_none() {
+                errors.push(format!("unalias: {}: not found", name));
+            }
+        }
+        if errors.is_empty() {
+            String::new()
+        } else {
+            errors.join("\n")
+        }
+    }
+
+    fn cmd_source(&mut self, args: &[&str]) -> String {
+        if args.len() != 1 {
+            return "usage: source FILE".into();
+        }
+
+        let path = args[0];
+        let Some(node) = self.kernel.fs.resolve(path) else {
+            return format!("source: {}: No such file or directory", path);
+        };
+        if node.is_dir {
+            return format!("source: {}: Is a directory", path);
+        }
+
+        let script = node.data.clone();
+        let mut outputs = Vec::new();
+        for line in script.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let out = self.exec(trimmed);
+            if !out.trim().is_empty() {
+                outputs.push(out);
+            }
+        }
+        outputs.join("\n")
+    }
+
+    fn parse_sed_subst(script: &str) -> Option<(String, String, bool)> {
+        let bytes = script.as_bytes();
+        if bytes.len() < 4 || bytes[0] != b's' {
+            return None;
+        }
+        let sep = bytes[1] as char;
+        let rest = &script[2..];
+        let mut parts = rest.split(sep);
+        let pattern = parts.next()?.to_string();
+        let replacement = parts.next()?.to_string();
+        let flags = parts.next().unwrap_or("");
+        let global = flags.contains('g');
+        Some((pattern, replacement, global))
+    }
+
+    fn expand_alias_line(&self, line: &str) -> String {
+        let mut out = line.to_string();
+        for _ in 0..8 {
+            let mut split = out.splitn(2, char::is_whitespace);
+            let Some(first) = split.next() else {
+                break;
+            };
+            if first.is_empty() {
+                break;
+            }
+            let Some(repl) = self.shell.aliases.get(first) else {
+                break;
+            };
+            let rest = split.next().unwrap_or("").trim_start();
+            out = if rest.is_empty() {
+                repl.clone()
+            } else {
+                format!("{} {}", repl, rest)
+            };
+        }
+        out
+    }
+
+    fn split_output_redirection(line: &str) -> Option<(&str, &str, bool)> {
+        if let Some((lhs, rhs)) = line.split_once(">>") {
+            let target = rhs.trim();
+            if !target.is_empty() {
+                return Some((lhs.trim(), target, true));
+            }
+        }
+
+        if let Some((lhs, rhs)) = line.split_once('>') {
+            let target = rhs.trim();
+            if !target.is_empty() {
+                return Some((lhs.trim(), target, false));
+            }
+        }
+
+        None
+    }
+
+    fn split_input_redirection(line: &str) -> Option<(&str, &str)> {
+        let (lhs, rhs) = line.split_once('<')?;
+        let target = rhs.trim();
+        if target.is_empty() {
+            None
+        } else {
+            Some((lhs, target))
+        }
+    }
+
+    fn exec_pipeline(&mut self, line: &str) -> String {
+        let mut stdin_buf = String::new();
+        let mut has_input = false;
+
+        for segment in line.split('|') {
+            let seg = segment.trim();
+            if seg.is_empty() {
+                return "sh: invalid null command in pipeline".into();
+            }
+
+            let mut rewritten = seg.to_string();
+            if has_input {
+                let tmp_path = "/tmp/.pipe.stdin";
+                let _ = if self.kernel.fs.resolve(tmp_path).is_some() {
+                    self.kernel.fs.write_file(tmp_path, &stdin_buf)
+                } else {
+                    self.kernel.fs.create_file(tmp_path, &stdin_buf)
+                };
+
+                let first = seg.split_whitespace().next().unwrap_or("");
+                match first {
+                    "cat" | "grep" | "sort" | "uniq" | "wc" | "head" | "tail" | "awk" | "sed"
+                        if seg.split_whitespace().count() <= 1 =>
+                    {
+                        rewritten = format!("{} {}", seg, tmp_path);
+                    }
+                    "grep" if seg.split_whitespace().count() == 2 => {
+                        rewritten = format!("{} {}", seg, tmp_path);
+                    }
+                    "head" | "tail"
+                        if seg.contains("-n") && seg.split_whitespace().count() <= 3 =>
+                    {
+                        rewritten = format!("{} {}", seg, tmp_path);
+                    }
+                    _ => {}
+                }
+            }
+
+            stdin_buf = self.exec(&rewritten);
+            has_input = true;
+        }
+
+        stdin_buf
     }
 
     fn is_builtin(&self, cmd: &str) -> bool {
@@ -1941,6 +2329,7 @@ impl System {
                 | "awk"
                 | "cat"
                 | "cd"
+                | "cksum"
                 | "chmod"
                 | "chown"
                 | "clear"
@@ -1973,12 +2362,20 @@ impl System {
                 | "hostname"
                 | "htop"
                 | "id"
+                | "groups"
+                | "who"
                 | "ifconfig"
                 | "ip"
                 | "kill"
+                | "jobs"
+                | "bg"
+                | "fg"
+                | "disown"
+                | "nohup"
                 | "ln"
                 | "ls"
                 | "man"
+                | "mount"
                 | "mkdir"
                 | "mv"
                 | "myip"
@@ -2001,6 +2398,7 @@ impl System {
                 | "socket"
                 | "sort"
                 | "ss"
+                | "stat"
                 | "sudo"
                 | "tail"
                 | "tar"
@@ -2010,8 +2408,10 @@ impl System {
                 | "tr"
                 | "traceroute"
                 | "tracert"
+                | "unalias"
                 | "uname"
                 | "uniq"
+                | "umount"
                 | "unzip"
                 | "uptime"
                 | "vi"
@@ -2021,6 +2421,7 @@ impl System {
                 | "whereis"
                 | "which"
                 | "whoami"
+                | "source"
                 | "zip"
         )
     }
@@ -2038,19 +2439,173 @@ impl System {
         }
         out
     }
-    fn cmd_kill(&mut self, args: &[&str]) -> String {
-        if args.is_empty() {
-            return "usage: kill <pid>".into();
+
+    fn spawn_background_job(&mut self, cmdline: &str, detached: bool) -> String {
+        let expanded = self.expand_alias_line(cmdline);
+        let mut parts = expanded.split_whitespace();
+        let Some(name) = parts.next() else {
+            return "sh: empty job command".into();
+        };
+
+        let Some(pid) = self.kernel.proc.spawn(name, 1, &mut self.kernel.mem) else {
+            return "Failed to spawn background process: out of memory".into();
+        };
+
+        self.kernel.scheduler.add(pid, Priority::Low);
+
+        let id = self.next_job_id;
+        self.next_job_id += 1;
+        self.jobs.push(ShellJob {
+            id,
+            pid,
+            command: expanded.clone(),
+            state: JobState::Running,
+        });
+
+        if detached {
+            format!("nohup: job {} started with pid {}", id, pid)
+        } else {
+            format!("[{}] {}", id, pid)
         }
-        match args[0].parse::<u32>() {
-            Ok(pid) => {
-                if self.kernel.proc.kill(pid, &mut self.kernel.mem) {
-                    String::new()
+    }
+
+    fn job_label(state: JobState) -> &'static str {
+        match state {
+            JobState::Running => "Running",
+            JobState::Stopped => "Stopped",
+        }
+    }
+
+    fn parse_job_spec(spec: &str) -> Option<u32> {
+        spec.strip_prefix('%').and_then(|v| v.parse::<u32>().ok())
+    }
+
+    fn find_job_index_by_spec(&self, spec: Option<&str>) -> Option<usize> {
+        if self.jobs.is_empty() {
+            return None;
+        }
+        match spec {
+            None => Some(self.jobs.len() - 1),
+            Some(s) => {
+                if let Some(job_id) = Self::parse_job_spec(s) {
+                    self.jobs.iter().position(|j| j.id == job_id)
+                } else if let Ok(pid) = s.parse::<u32>() {
+                    self.jobs.iter().position(|j| j.pid == pid)
                 } else {
-                    format!("kill: {}: no such process or cannot kill", pid)
+                    None
                 }
             }
-            Err(_) => "kill: invalid pid".into(),
+        }
+    }
+
+    fn cmd_jobs(&self, _args: &[&str]) -> String {
+        if self.jobs.is_empty() {
+            return String::new();
+        }
+        self.jobs
+            .iter()
+            .map(|j| {
+                format!(
+                    "[{}] {:<7} {:>5} {}",
+                    j.id,
+                    Self::job_label(j.state),
+                    j.pid,
+                    j.command
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn cmd_bg(&mut self, args: &[&str]) -> String {
+        let idx = match self.find_job_index_by_spec(args.first().copied()) {
+            Some(i) => i,
+            None => return "bg: no such job".into(),
+        };
+        let job = &mut self.jobs[idx];
+        job.state = JobState::Running;
+        format!("[{}] {} &", job.id, job.command)
+    }
+
+    fn cmd_fg(&mut self, args: &[&str]) -> String {
+        let idx = match self.find_job_index_by_spec(args.first().copied()) {
+            Some(i) => i,
+            None => return "fg: no such job".into(),
+        };
+        let job = self.jobs.remove(idx);
+        let _ = self.kernel.proc.kill(job.pid, &mut self.kernel.mem);
+        self.kernel.scheduler.remove(job.pid);
+        job.command
+    }
+
+    fn cmd_disown(&mut self, args: &[&str]) -> String {
+        let idx = match self.find_job_index_by_spec(args.first().copied()) {
+            Some(i) => i,
+            None => return "disown: no such job".into(),
+        };
+        self.jobs.remove(idx);
+        String::new()
+    }
+
+    fn cmd_nohup(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: nohup COMMAND [ARG]...".into();
+        }
+        self.spawn_background_job(&args.join(" "), true)
+    }
+
+    fn cmd_kill(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: kill [-SIGNAL] <pid|%job>...".into();
+        }
+
+        let mut idx = 0;
+        let mut signal = "TERM".to_string();
+        if let Some(first) = args.first() {
+            if let Some(rest) = first.strip_prefix('-') {
+                if !rest.is_empty() {
+                    signal = rest.to_ascii_uppercase();
+                    idx = 1;
+                }
+            }
+        }
+
+        if idx >= args.len() {
+            return "kill: missing pid or %job".into();
+        }
+
+        let mut errors = Vec::new();
+        for target in &args[idx..] {
+            let maybe_pid = if let Some(job_id) = Self::parse_job_spec(target) {
+                self.jobs.iter().find(|j| j.id == job_id).map(|j| j.pid)
+            } else {
+                target.parse::<u32>().ok()
+            };
+
+            let Some(pid) = maybe_pid else {
+                errors.push(format!("kill: {}: invalid target", target));
+                continue;
+            };
+
+            let killed = self.kernel.proc.kill(pid, &mut self.kernel.mem);
+            if killed {
+                self.kernel.scheduler.remove(pid);
+                if signal == "STOP" || signal == "19" {
+                    if let Some(j) = self.jobs.iter_mut().find(|j| j.pid == pid) {
+                        j.state = JobState::Stopped;
+                    }
+                } else {
+                    self.jobs.retain(|j| j.pid != pid);
+                }
+            } else {
+                errors.push(format!("kill: {}: no such process or cannot kill", target));
+            }
+        }
+
+        if errors.is_empty() {
+            String::new()
+        } else {
+            errors.join("\n")
         }
     }
     fn cmd_uname(&self, args: &[&str]) -> String {
@@ -2113,12 +2668,13 @@ impl System {
             }
             let needle = args[1].to_lowercase();
             let pages = [
-                "alias", "apt", "cat", "cd", "chmod", "chown", "clear", "cp", "curl", "cut",
-                "date", "df", "diff", "du", "echo", "find", "free", "grep", "head", "help",
-                "history", "host", "hostname", "htop", "id", "kill", "ln", "ls", "man", "mkdir",
-                "mv", "ping", "ps", "pwd", "python", "rm", "sort", "sudo", "tail", "tee", "top",
-                "touch", "tr", "uname", "uniq", "uptime", "wc", "whereis", "which", "whoami",
-                "grub", "doom", "doommap",
+                "alias", "apt", "cat", "cd", "cksum", "chmod", "chown", "clear", "cp", "curl",
+                "cut", "date", "df", "diff", "du", "echo", "find", "free", "grep", "head", "help",
+                "history", "host", "hostname", "htop", "id", "groups", "who", "kill", "jobs", "bg",
+                "fg", "disown", "nohup", "ln", "ls", "man", "mkdir", "mount", "umount", "mv",
+                "ping", "ps", "pwd", "python", "rm", "sort", "source", "stat", "sudo", "tail",
+                "tee", "top", "touch", "tr", "unalias", "uname", "uniq", "uptime", "wc", "whereis",
+                "which", "whoami", "grub", "doom", "doommap",
             ];
             let matches: Vec<&str> = pages
                 .iter()
@@ -2215,6 +2771,13 @@ DESCRIPTION
        Print the full filename of the current working directory.
 "#
                 .into()
+            }
+
+            "cksum" => {
+                format!(
+                    "CKSUM(1)                         User Commands                        CKSUM(1)\n\nNAME\n       cksum - display CRC checksum and byte counts\n\nSYNOPSIS\n       cksum FILE...\n\nDESCRIPTION\n       Print a CRC32 checksum, byte count, and filename for each input file.\n\nBACKEND\n       Active checksum backend: {}\n",
+                    crate::cpp_accel::backend_name()
+                )
             }
 
             "rm" => {
@@ -2322,11 +2885,87 @@ NAME
        kill - send a signal to a process
 
 SYNOPSIS
-       kill PID
+            kill [-SIGNAL] <pid|%job>...
 
 DESCRIPTION
-       Send SIGTERM to the process with the given PID.
+            Send a signal to process IDs or shell job references.
+            Common signals: -TERM (default), -KILL, -STOP.
 "#
+                .into()
+            }
+
+            "jobs" => {
+                r#"JOBS(1)                          User Commands                         JOBS(1)
+
+        NAME
+            jobs - list active jobs
+
+        SYNOPSIS
+            jobs
+
+        DESCRIPTION
+            Display shell-managed background jobs with status and pid.
+        "#
+                .into()
+            }
+
+            "bg" => {
+                r#"BG(1)                            User Commands                           BG(1)
+
+        NAME
+            bg - resume jobs in the background
+
+        SYNOPSIS
+            bg [%JOB]
+
+        DESCRIPTION
+            Mark selected job as running in background.
+        "#
+                .into()
+            }
+
+            "fg" => {
+                r#"FG(1)                            User Commands                           FG(1)
+
+        NAME
+            fg - move job to foreground
+
+        SYNOPSIS
+            fg [%JOB]
+
+        DESCRIPTION
+            Bring a selected job to foreground and remove job tracking.
+        "#
+                .into()
+            }
+
+            "disown" => {
+                r#"DISOWN(1)                        User Commands                       DISOWN(1)
+
+        NAME
+            disown - remove jobs from shell job table
+
+        SYNOPSIS
+            disown [%JOB]
+
+        DESCRIPTION
+            Remove selected job from shell tracking without signaling it.
+        "#
+                .into()
+            }
+
+            "nohup" => {
+                r#"NOHUP(1)                         User Commands                        NOHUP(1)
+
+        NAME
+            nohup - run command detached from terminal
+
+        SYNOPSIS
+            nohup COMMAND [ARG]...
+
+        DESCRIPTION
+            Start command as a detached shell-managed background job.
+        "#
                 .into()
             }
 
@@ -2419,6 +3058,90 @@ DESCRIPTION
 EXAMPLES
        grep "error" /var/log/syslog
               Search for lines containing "error" in syslog
+"#
+                .into()
+            }
+
+            "alias" => {
+                r#"ALIAS(1)                         User Commands                        ALIAS(1)
+
+NAME
+    alias - define or display aliases
+
+SYNOPSIS
+    alias
+    alias NAME='VALUE'
+    alias NAME
+
+DESCRIPTION
+    Without arguments, list current aliases.
+    With NAME=VALUE, define or replace an alias.
+    With NAME, display a specific alias.
+"#
+                .into()
+            }
+
+            "unalias" => {
+                r#"UNALIAS(1)                       User Commands                      UNALIAS(1)
+
+NAME
+    unalias - remove alias definitions
+
+SYNOPSIS
+    unalias NAME...
+
+DESCRIPTION
+    Remove each specified alias from the current shell session.
+"#
+                .into()
+            }
+
+            "source" | "." => {
+                r#"SOURCE(1)                        User Commands                       SOURCE(1)
+
+NAME
+    source - execute commands from a file in the current shell
+
+SYNOPSIS
+    source FILE
+    . FILE
+
+DESCRIPTION
+    Read and execute commands from FILE in the current shell context.
+"#
+                .into()
+            }
+
+            "awk" => {
+                r#"AWK(1)                           User Commands                          AWK(1)
+
+NAME
+    awk - pattern scanning and processing language
+
+SYNOPSIS
+    awk [-F DELIM] '{print ...}' FILE
+
+DESCRIPTION
+    Supported subset:
+      print            print full line
+      print $N         print field N
+      print $1,$3      print selected fields
+"#
+                .into()
+            }
+
+            "sed" => {
+                r#"SED(1)                           User Commands                          SED(1)
+
+NAME
+    sed - stream editor
+
+SYNOPSIS
+    sed [-i] 's/old/new/[g]' FILE
+
+DESCRIPTION
+    Supported subset: substitution command with optional global flag.
+    -i updates the file in place.
 "#
                 .into()
             }
@@ -2641,8 +3364,12 @@ SYNOPSIS
 DESCRIPTION
        chmod changes the file mode bits of FILE.
 
+MODES
+       Numeric: 644, 755, 0640
+       Symbolic: u+x, g-w, o=r, a+r
+
 NOTE
-    Permission metadata is shown, but access-control checks are permissive.
+    This shell updates permission metadata in the virtual filesystem.
 "#
                 .into()
             }
@@ -2654,13 +3381,102 @@ NAME
        chown - change file owner and group
 
 SYNOPSIS
-       chown OWNER FILE
+    chown OWNER[:GROUP] FILE...
 
 DESCRIPTION
        chown changes the user and/or group ownership of FILE.
+"#
+                .into()
+            }
 
-NOTE
-    Ownership metadata updates are accepted by the virtual filesystem.
+            "id" => {
+                r#"ID(1)                            User Commands                           ID(1)
+
+NAME
+    id - print real and effective user and group IDs
+
+SYNOPSIS
+    id [-u|-g|-un|-gn] [USER]
+
+DESCRIPTION
+    Print user identity information from /etc/passwd and /etc/group.
+"#
+                .into()
+            }
+
+            "groups" => {
+                r#"GROUPS(1)                        User Commands                       GROUPS(1)
+
+NAME
+    groups - print the groups a user is in
+
+SYNOPSIS
+    groups [USER]
+
+DESCRIPTION
+    Show primary and supplementary group memberships.
+"#
+                .into()
+            }
+
+            "who" => {
+                r#"WHO(1)                           User Commands                          WHO(1)
+
+NAME
+    who - show who is logged on
+
+SYNOPSIS
+    who
+
+DESCRIPTION
+    Display current interactive login information for this shell session.
+"#
+                .into()
+            }
+
+            "stat" => {
+                r#"STAT(1)                          User Commands                         STAT(1)
+
+NAME
+    stat - display file or file system status
+
+SYNOPSIS
+    stat FILE
+
+DESCRIPTION
+    Display metadata including size, mode, owner, and group.
+"#
+                .into()
+            }
+
+            "mount" => {
+                r#"MOUNT(8)                     System Administration                    MOUNT(8)
+
+NAME
+    mount - mount a filesystem
+
+SYNOPSIS
+    mount
+    mount [-t TYPE] SOURCE TARGET
+
+DESCRIPTION
+    Without arguments, show mounted filesystems from /proc/mounts.
+    With arguments, add a mount entry for SOURCE on TARGET.
+"#
+                .into()
+            }
+
+            "umount" => {
+                r#"UMOUNT(8)                    System Administration                   UMOUNT(8)
+
+NAME
+    umount - unmount filesystems
+
+SYNOPSIS
+    umount TARGET
+
+DESCRIPTION
+    Remove TARGET from the active /proc/mounts table.
 "#
                 .into()
             }
@@ -3521,6 +4337,61 @@ SEE ALSO
         "\x1b[PYTHON_REPL]".into()
     }
 
+    fn cmd_python(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return self.start_python_repl();
+        }
+
+        if args[0] == "-c" {
+            if args.len() < 2 {
+                return "python: option -c requires an argument".into();
+            }
+            let code = args[1..].join(" ");
+            let mut interp = PythonInterpreter::new();
+            return match interp.eval(&code) {
+                Ok(v) => v,
+                Err(e) => format!("Error: {}", e),
+            };
+        }
+
+        let script_path = args[0];
+        let Some(node) = self.kernel.fs.resolve(script_path) else {
+            return format!(
+                "python: can't open file '{}': [Errno 2] No such file or directory",
+                script_path
+            );
+        };
+        if node.is_dir {
+            return format!("python: {}: Is a directory", script_path);
+        }
+
+        let mut interp = PythonInterpreter::new();
+        let mut out = Vec::new();
+        for (line_no, line) in node.data.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            match interp.eval(trimmed) {
+                Ok(v) => {
+                    if !v.is_empty() {
+                        out.push(v);
+                    }
+                }
+                Err(e) => {
+                    return format!(
+                        "Traceback (most recent call last):\n  File \"{}\", line {}\nError: {}",
+                        script_path,
+                        line_no + 1,
+                        e
+                    );
+                }
+            }
+        }
+
+        out.join("\n")
+    }
+
     #[wasm_bindgen]
     pub fn exec_python(&mut self, code: &str) -> String {
         if code.trim() == "exit()" {
@@ -3644,6 +4515,7 @@ SEE ALSO
             "awk",
             "cat",
             "cd",
+            "cksum",
             "chmod",
             "chown",
             "clear",
@@ -3669,6 +4541,7 @@ SEE ALSO
             "gunzip",
             "gzip",
             "hasgrub",
+            "source",
             "head",
             "help",
             "history",
@@ -3676,12 +4549,16 @@ SEE ALSO
             "hostname",
             "htop",
             "id",
+            "groups",
+            "who",
             "ifconfig",
             "ip",
+            "unalias",
             "kill",
             "ln",
             "ls",
             "man",
+            "mount",
             "mkdir",
             "mv",
             "myip",
@@ -3704,6 +4581,7 @@ SEE ALSO
             "socket",
             "sort",
             "ss",
+            "stat",
             "sudo",
             "tail",
             "tar",
@@ -3715,11 +4593,13 @@ SEE ALSO
             "tracert",
             "uname",
             "uniq",
+            "umount",
             "unzip",
             "uptime",
             "vi",
             "vim",
             "wc",
+            "cksum",
             "wget",
             "whereis",
             "which",

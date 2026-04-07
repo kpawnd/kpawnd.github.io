@@ -260,6 +260,14 @@ impl Vfs {
                 Inode::binary("printenv", "print environment", false),
             );
             bin.children.insert(
+                "source".into(),
+                Inode::binary("source", "run commands from file", false),
+            );
+            bin.children.insert(
+                "unalias".into(),
+                Inode::binary("unalias", "remove alias definitions", false),
+            );
+            bin.children.insert(
                 "head".into(),
                 Inode::binary("head", "output first part of files", false),
             );
@@ -270,6 +278,10 @@ impl Vfs {
             bin.children.insert(
                 "wc".into(),
                 Inode::binary("wc", "word, line, byte count", false),
+            );
+            bin.children.insert(
+                "cksum".into(),
+                Inode::binary("cksum", "compute file checksums", false),
             );
             bin.children
                 .insert("sort".into(), Inode::binary("sort", "sort lines", false));
@@ -384,6 +396,26 @@ impl Vfs {
             bin.children.insert(
                 "passwd".into(),
                 Inode::binary("passwd", "change password", false),
+            );
+            bin.children.insert(
+                "jobs".into(),
+                Inode::binary("jobs", "list active jobs", false),
+            );
+            bin.children.insert(
+                "bg".into(),
+                Inode::binary("bg", "resume jobs in background", false),
+            );
+            bin.children.insert(
+                "fg".into(),
+                Inode::binary("fg", "move jobs to foreground", false),
+            );
+            bin.children.insert(
+                "disown".into(),
+                Inode::binary("disown", "remove jobs from shell table", false),
+            );
+            bin.children.insert(
+                "nohup".into(),
+                Inode::binary("nohup", "run command detached from terminal", false),
             );
         }
 
