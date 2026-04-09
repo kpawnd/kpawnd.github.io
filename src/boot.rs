@@ -76,7 +76,8 @@ impl Bootloader for GrubBootloader {
                 format!("[    0.000000] Linux version {}", kernel.version),
                 "[    0.027114] kernel: command line parameters loaded".to_string(),
                 "[    0.041903] kernel: mounting root filesystem".to_string(),
-                "[    0.054228] EXT4-fs (sda1): mounted filesystem with ordered data mode".to_string(),
+                "[    0.054228] EXT4-fs (sda1): mounted filesystem with ordered data mode"
+                    .to_string(),
                 "[    0.066441] systemd[1]: systemd 255 running in system mode".to_string(),
                 "[    0.074229] systemd[1]: Detected architecture x86-64.".to_string(),
                 "[    0.082511] systemd[1]: Starting Journal Service...".to_string(),

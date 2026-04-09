@@ -995,7 +995,10 @@ impl System {
             return "usage: cksum [-a crc32|adler32] FILE...".into();
         }
         if algo != "crc32" && algo != "adler32" {
-            return format!("cksum: unsupported algorithm '{}': expected crc32 or adler32", algo);
+            return format!(
+                "cksum: unsupported algorithm '{}': expected crc32 or adler32",
+                algo
+            );
         }
 
         let mut lines = Vec::new();
@@ -1738,7 +1741,11 @@ impl System {
                         Ok(bytes) => bytes,
                         Err(e) => return format!("tar: {}", e),
                     };
-                    lines.push(format!("F\t{}\t{}", path, crate::cpp_accel::b64_encode(&data)));
+                    lines.push(format!(
+                        "F\t{}\t{}",
+                        path,
+                        crate::cpp_accel::b64_encode(&data)
+                    ));
                 }
             }
 
@@ -1785,7 +1792,10 @@ impl System {
         }
 
         if let Err(e) = self.ensure_dir_all(dest_dir) {
-            return format!("tar: cannot create extraction directory '{}': {}", dest_dir, e);
+            return format!(
+                "tar: cannot create extraction directory '{}': {}",
+                dest_dir, e
+            );
         }
 
         let base = self.kernel.fs.normalize(dest_dir);
@@ -2077,16 +2087,41 @@ impl System {
 
     fn apt_catalog() -> [(&'static str, &'static str, u32, &'static str); 10] {
         [
-            ("nano", "7.2-1", 1632, "small, friendly text editor inspired by Pico"),
+            (
+                "nano",
+                "7.2-1",
+                1632,
+                "small, friendly text editor inspired by Pico",
+            ),
             ("vim", "9.0-3", 8420, "Vi IMproved - enhanced vi editor"),
             ("htop", "3.3.0-1", 512, "interactive process viewer"),
             ("cmatrix", "2.0-4", 296, "simulates the Matrix digital rain"),
-            ("curl", "8.7.1-1", 2304, "command line tool for transferring data with URL syntax"),
+            (
+                "curl",
+                "8.7.1-1",
+                2304,
+                "command line tool for transferring data with URL syntax",
+            ),
             ("wget", "1.21.4-2", 1480, "retrieves files from the web"),
-            ("git", "2.46.0-1", 12640, "fast, scalable, distributed revision control system"),
-            ("openssh-server", "9.8p1-1", 2630, "secure shell (SSH) server"),
+            (
+                "git",
+                "2.46.0-1",
+                12640,
+                "fast, scalable, distributed revision control system",
+            ),
+            (
+                "openssh-server",
+                "9.8p1-1",
+                2630,
+                "secure shell (SSH) server",
+            ),
             ("net-tools", "2.10-1", 720, "NET-3 networking toolkit"),
-            ("python3", "3.12.2-1", 11240, "interactive high-level object-oriented language"),
+            (
+                "python3",
+                "3.12.2-1",
+                11240,
+                "interactive high-level object-oriented language",
+            ),
         ]
     }
 
@@ -2112,7 +2147,12 @@ impl System {
             .collect::<Vec<_>>()
             .join("\n");
 
-        if self.kernel.fs.resolve("/var/lib/apt/installed.db").is_some() {
+        if self
+            .kernel
+            .fs
+            .resolve("/var/lib/apt/installed.db")
+            .is_some()
+        {
             self.kernel
                 .fs
                 .write_file("/var/lib/apt/installed.db", &data)
@@ -2143,13 +2183,19 @@ impl System {
                     .kernel
                     .fs
                     .write_file("/var/lib/apt/lists/last_update", &stamp)
-                    .or_else(|_| self.kernel.fs.create_file("/var/lib/apt/lists/last_update", &stamp));
+                    .or_else(|_| {
+                        self.kernel
+                            .fs
+                            .create_file("/var/lib/apt/lists/last_update", &stamp)
+                    });
                 "Hit:1 https://archive.kpawnd.local stable InRelease\nReading package lists... Done\nBuilding dependency tree... Done\nAll packages are up to date.".into()
             }
             "upgrade" => {
                 let mut upgraded = 0usize;
                 for (name, _installed_ver) in installed.clone() {
-                    if let Some((_, latest_ver, _, _)) = catalog.iter().find(|(pkg, _, _, _)| *pkg == name) {
+                    if let Some((_, latest_ver, _, _)) =
+                        catalog.iter().find(|(pkg, _, _, _)| *pkg == name)
+                    {
                         if installed.get(&name) != Some(&latest_ver.to_string()) {
                             installed.insert(name.clone(), (*latest_ver).to_string());
                             upgraded += 1;
@@ -2171,7 +2217,9 @@ impl System {
                     return "usage: apt install [package]".into();
                 }
                 let package = args[1];
-                let Some((_, version, size_kb, _desc)) = catalog.iter().find(|(name, _, _, _)| *name == package) else {
+                let Some((_, version, size_kb, _desc)) =
+                    catalog.iter().find(|(name, _, _, _)| *name == package)
+                else {
                     return format!("E: Unable to locate package {}", package);
                 };
 
@@ -2236,9 +2284,15 @@ impl System {
                     }
                 }
                 if matches.is_empty() {
-                    return format!("Sorting... Done\nFull Text Search... Done\nNo packages found matching {}", args[1]);
+                    return format!(
+                        "Sorting... Done\nFull Text Search... Done\nNo packages found matching {}",
+                        args[1]
+                    );
                 }
-                format!("Sorting... Done\nFull Text Search... Done\n{}", matches.join("\n\n"))
+                format!(
+                    "Sorting... Done\nFull Text Search... Done\n{}",
+                    matches.join("\n\n")
+                )
             }
             _ => format!("E: Invalid operation {}", args[0]),
         }
@@ -2351,7 +2405,16 @@ MiB Mem : {:>7.1} total, {:>7.1} free, {:>7.1} used, {:>7.1} buff/cache\n\n\
                 } else {
                     0.0
                 };
-                (p.pid, p.ppid, p.name.clone(), p.state, p.priority, p.memory_size, cpu, mem_pct)
+                (
+                    p.pid,
+                    p.ppid,
+                    p.name.clone(),
+                    p.state,
+                    p.priority,
+                    p.memory_size,
+                    cpu,
+                    mem_pct,
+                )
             })
             .collect();
         rows.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
@@ -2421,7 +2484,11 @@ MiB Mem : {:>7.1} total, {:>7.1} free, {:>7.1} used, {:>7.1} buff/cache\n\n\
         let bar = |pct: f64| {
             let width = 24usize;
             let fill = ((pct / 100.0) * width as f64).round() as usize;
-            format!("{}{}", "|".repeat(fill.min(width)), " ".repeat(width.saturating_sub(fill.min(width))))
+            format!(
+                "{}{}",
+                "|".repeat(fill.min(width)),
+                " ".repeat(width.saturating_sub(fill.min(width)))
+            )
         };
 
         let mut out = String::new();
@@ -2434,10 +2501,7 @@ MiB Mem : {:>7.1} total, {:>7.1} free, {:>7.1} used, {:>7.1} buff/cache\n\n\
         ));
         out.push_str(&format!(
             "Tasks: {} total, {} running, {} sleeping, {} stopped\n",
-            task_total,
-            task_running,
-            task_sleep,
-            task_stop
+            task_total, task_running, task_sleep, task_stop
         ));
         out.push_str(&format!("CPU [ {} ] {:>5.1}%\n", bar(cpu_avg), cpu_avg));
         out.push_str(&format!(
@@ -2482,7 +2546,12 @@ MiB Mem : {:>7.1} total, {:>7.1} free, {:>7.1} used, {:>7.1} buff/cache\n\n\
                 Self::proc_state_char(p.state),
                 cpu_pct,
                 mem_pct_proc,
-                format!("{}:{:02}.{:02}", (p.pid / 7) % 99, (p.pid * 5) % 60, (p.pid * 3) % 100),
+                format!(
+                    "{}:{:02}.{:02}",
+                    (p.pid / 7) % 99,
+                    (p.pid * 5) % 60,
+                    (p.pid * 3) % 100
+                ),
                 p.name
             ));
         }
@@ -3172,13 +3241,13 @@ MiB Mem : {:>7.1} total, {:>7.1} free, {:>7.1} used, {:>7.1} buff/cache\n\n\
             }
             let needle = args[1].to_lowercase();
             let pages = [
-                "alias", "apt", "cat", "cmatrix", "cd", "cksum", "chmod", "chown", "clear", "cp", "curl",
-                "cut", "date", "df", "diff", "du", "echo", "find", "free", "grep", "head", "help",
-                "history", "host", "hostname", "htop", "id", "groups", "who", "kill", "jobs", "bg",
-                "fg", "disown", "nohup", "ln", "ls", "man", "mkdir", "mount", "umount", "mv",
-                "ping", "ps", "pwd", "python", "rm", "sort", "source", "stat", "sudo", "tail",
-                "tee", "top", "touch", "tr", "unalias", "uname", "uniq", "uptime", "wc", "whereis",
-                "which", "whoami", "grub", "doom", "doommap",
+                "alias", "apt", "cat", "cmatrix", "cd", "cksum", "chmod", "chown", "clear", "cp",
+                "curl", "cut", "date", "df", "diff", "du", "echo", "find", "free", "grep", "head",
+                "help", "history", "host", "hostname", "htop", "id", "groups", "who", "kill",
+                "jobs", "bg", "fg", "disown", "nohup", "ln", "ls", "man", "mkdir", "mount",
+                "umount", "mv", "ping", "ps", "pwd", "python", "rm", "sort", "source", "stat",
+                "sudo", "tail", "tee", "top", "touch", "tr", "unalias", "uname", "uniq", "uptime",
+                "wc", "whereis", "which", "whoami", "grub", "doom", "doommap",
             ];
             let matches: Vec<&str> = pages
                 .iter()

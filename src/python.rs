@@ -66,46 +66,46 @@ impl PythonInterpreter {
 
         #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
         {
-        // Security: Block dangerous operations
-        if code.contains("import")
-            || code.contains("__")
-            || code.contains("eval")
-            || code.contains("exec")
-            || code.contains("open")
-            || code.contains("file")
-            || code.contains("compile")
-        {
-            return Err("Forbidden operation".to_string());
-        }
-
-        let trimmed = code.trim();
-
-        // Handle print() function
-        if trimmed.starts_with("print(") && trimmed.ends_with(")") {
-            let content = &trimmed[6..trimmed.len() - 1];
-            let result = self.eval_expression(content)?;
-            self.output.push(result.to_string());
-            return Ok(result.to_string());
-        }
-
-        // Handle variable assignment
-        if let Some(eq_pos) = trimmed.find('=') {
-            if !trimmed[..eq_pos].contains('>')
-                && !trimmed[..eq_pos].contains('<')
-                && !trimmed[..eq_pos].contains('!')
-                && !trimmed[..eq_pos].contains('=')
+            // Security: Block dangerous operations
+            if code.contains("import")
+                || code.contains("__")
+                || code.contains("eval")
+                || code.contains("exec")
+                || code.contains("open")
+                || code.contains("file")
+                || code.contains("compile")
             {
-                let var_name = trimmed[..eq_pos].trim().to_string();
-                let expr = trimmed[eq_pos + 1..].trim();
-                let value = self.eval_expression(expr)?;
-                self.globals.insert(var_name, value);
-                return Ok(String::new());
+                return Err("Forbidden operation".to_string());
             }
-        }
 
-        // Handle expressions
-        let result = self.eval_expression(trimmed)?;
-        Ok(result.to_string())
+            let trimmed = code.trim();
+
+            // Handle print() function
+            if trimmed.starts_with("print(") && trimmed.ends_with(")") {
+                let content = &trimmed[6..trimmed.len() - 1];
+                let result = self.eval_expression(content)?;
+                self.output.push(result.to_string());
+                return Ok(result.to_string());
+            }
+
+            // Handle variable assignment
+            if let Some(eq_pos) = trimmed.find('=') {
+                if !trimmed[..eq_pos].contains('>')
+                    && !trimmed[..eq_pos].contains('<')
+                    && !trimmed[..eq_pos].contains('!')
+                    && !trimmed[..eq_pos].contains('=')
+                {
+                    let var_name = trimmed[..eq_pos].trim().to_string();
+                    let expr = trimmed[eq_pos + 1..].trim();
+                    let value = self.eval_expression(expr)?;
+                    self.globals.insert(var_name, value);
+                    return Ok(String::new());
+                }
+            }
+
+            // Handle expressions
+            let result = self.eval_expression(trimmed)?;
+            Ok(result.to_string())
         }
     }
 

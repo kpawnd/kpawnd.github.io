@@ -484,7 +484,11 @@ impl GrubMenu {
             let tokens: Vec<&str> = linux_line.split_whitespace().collect();
             if tokens.len() >= 3 {
                 let image = tokens[1];
-                if let Some(version) = image.rsplit('/').next().and_then(|f| f.strip_prefix("vmlinuz-")) {
+                if let Some(version) = image
+                    .rsplit('/')
+                    .next()
+                    .and_then(|f| f.strip_prefix("vmlinuz-"))
+                {
                     if self.is_recovery_selection() {
                         self.recovery_kernel_version = version.to_string();
                     } else {
@@ -541,7 +545,8 @@ impl GrubMenu {
             "set" => {
                 let (_, version, cmdline) = self.effective_boot_profile();
                 self.cmdline_output.push(format!("kernel={}", version));
-                self.cmdline_output.push(format!("linux_cmdline={}", cmdline));
+                self.cmdline_output
+                    .push(format!("linux_cmdline={}", cmdline));
             }
             "ls" => self
                 .cmdline_output
@@ -572,17 +577,18 @@ impl GrubMenu {
                                 self.normal_kernel_version = version.to_string();
                                 self.normal_cmdline = parts[2..].join(" ");
                             }
-                            self.cmdline_output.push("linux parameters updated".to_string());
+                            self.cmdline_output
+                                .push("linux parameters updated".to_string());
                         } else {
-                            self.cmdline_output.push("error: invalid linux image path".to_string());
+                            self.cmdline_output
+                                .push("error: invalid linux image path".to_string());
                         }
                     } else {
                         self.cmdline_output
                             .push("usage: linux /boot/vmlinuz-<version> <cmdline>".to_string());
                     }
                 } else if cmd.starts_with("initrd ") {
-                    self.cmdline_output
-                        .push("initrd accepted".to_string());
+                    self.cmdline_output.push("initrd accepted".to_string());
                 } else {
                     self.cmdline_output
                         .push(format!("error: unknown command '{}'", cmd));

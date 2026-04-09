@@ -68,8 +68,13 @@ unsafe extern "C" {
 
     fn cpp_python_new() -> u32;
     fn cpp_python_free(id: u32);
-    fn cpp_python_eval(id: u32, code: *const u8, code_len: usize, out: *mut u8, out_cap: usize)
-        -> usize;
+    fn cpp_python_eval(
+        id: u32,
+        code: *const u8,
+        code_len: usize,
+        out: *mut u8,
+        out_cap: usize,
+    ) -> usize;
 }
 
 #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -114,15 +119,7 @@ pub fn fade_rgba_sub(pixels: &mut [u8], sub_r: u8, sub_g: u8, sub_b: u8) {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
         // SAFETY: `pixels` is valid mutable memory for `len` bytes.
-        unsafe {
-            cpp_fade_rgba_sub(
-                pixels.as_mut_ptr(),
-                pixels.len(),
-                sub_r,
-                sub_g,
-                sub_b,
-            )
-        };
+        unsafe { cpp_fade_rgba_sub(pixels.as_mut_ptr(), pixels.len(), sub_r, sub_g, sub_b) };
         return;
     }
 
@@ -173,8 +170,16 @@ pub fn raycast_dda_map(
     {
         let mut map_x = pos_x as i32;
         let mut map_y = pos_y as i32;
-        let inv_dir_x = if dir_x.abs() > 0.00001 { 1.0 / dir_x } else { 1e30 };
-        let inv_dir_y = if dir_y.abs() > 0.00001 { 1.0 / dir_y } else { 1e30 };
+        let inv_dir_x = if dir_x.abs() > 0.00001 {
+            1.0 / dir_x
+        } else {
+            1e30
+        };
+        let inv_dir_y = if dir_y.abs() > 0.00001 {
+            1.0 / dir_y
+        } else {
+            1e30
+        };
         let delta_dist_x = inv_dir_x.abs();
         let delta_dist_y = inv_dir_y.abs();
 
@@ -409,7 +414,8 @@ pub fn python_eval(id: u32, code: &str) -> Result<String, String> {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
         let mut out = vec![0u8; 2048];
-        let written = unsafe { cpp_python_eval(id, code.as_ptr(), code.len(), out.as_mut_ptr(), out.len()) };
+        let written =
+            unsafe { cpp_python_eval(id, code.as_ptr(), code.len(), out.as_mut_ptr(), out.len()) };
         out.truncate(written.min(out.len()));
         if out.is_empty() {
             return Ok(String::new());
