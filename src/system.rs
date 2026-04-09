@@ -2,14 +2,14 @@ use crate::{
     boot::BootManager,
     kernel::Kernel,
     network::{NetworkStack, Protocol},
-    process::{Priority, ProcState},
+    process::{Priority, ProcState, Process},
     python::PythonInterpreter,
     services::ServiceManager,
     shell::{prompt, Shell},
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 use wasm_bindgen::prelude::*;
 use zip::write::SimpleFileOptions;
@@ -282,7 +282,7 @@ impl System {
                     _ => "usage: doommap <proc|restore>".into(),
                 }
             }
-            "screensaver" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
+            "screensaver" | "cmatrix" => "\x1b[LAUNCH_SCREENSAVER]".to_string(),
             "wget" => self.cmd_wget(args),
             "curl" => self.cmd_curl(args),
             "myip" => self.cmd_myip(),
@@ -316,8 +316,8 @@ impl System {
             "gzip" | "gunzip" => self.cmd_gzip(args, cmd),
             "zip" | "unzip" => self.cmd_zip(args, cmd),
             "apt" | "apt-get" => self.cmd_apt(args),
-            "top" => self.cmd_top(),
-            "htop" => self.cmd_htop(),
+            "top" => self.cmd_top(args),
+            "htop" => self.cmd_htop(args),
             "awk" => self.cmd_awk(args),
             "sed" => self.cmd_sed(args),
             "alias" => self.cmd_alias(args),
@@ -982,16 +982,33 @@ impl System {
 
     fn cmd_cksum(&self, args: &[&str]) -> String {
         if args.is_empty() {
-            return "usage: cksum FILE...".into();
+            return "usage: cksum [-a crc32|adler32] FILE...".into();
+        }
+
+        let mut idx = 0;
+        let mut algo = "crc32";
+        if args.len() >= 2 && args[0] == "-a" {
+            algo = args[1];
+            idx = 2;
+        }
+        if idx >= args.len() {
+            return "usage: cksum [-a crc32|adler32] FILE...".into();
+        }
+        if algo != "crc32" && algo != "adler32" {
+            return format!("cksum: unsupported algorithm '{}': expected crc32 or adler32", algo);
         }
 
         let mut lines = Vec::new();
-        for path in args {
+        for path in &args[idx..] {
             let data = match self.read_file_bytes(path) {
                 Ok(data) => data,
                 Err(e) => return format!("cksum: {}", e),
             };
-            let sum = crate::cpp_accel::crc32(&data);
+            let sum = if algo == "adler32" {
+                crate::cpp_accel::adler32(&data)
+            } else {
+                crate::cpp_accel::crc32(&data)
+            };
             lines.push(format!("{} {} {}", sum, data.len(), path));
         }
         lines.join("\n")
@@ -1629,8 +1646,186 @@ impl System {
         }
     }
 
-    fn cmd_tar(&self, _args: &[&str]) -> String {
-        "tar: use zip/unzip for archive workflows in this build".into()
+    fn collect_tree_paths(&self, root: &str, out: &mut Vec<(String, bool)>) {
+        if let Some(node) = self.kernel.fs.resolve(root) {
+            out.push((root.to_string(), node.is_dir));
+            if node.is_dir {
+                for name in node.children.keys() {
+                    let child = Self::join_virtual_path(root, name);
+                    self.collect_tree_paths(&child, out);
+                }
+            }
+        }
+    }
+
+    fn cmd_tar(&mut self, args: &[&str]) -> String {
+        if args.is_empty() {
+            return "usage: tar -cf ARCHIVE.tar PATH... | tar -tf ARCHIVE.tar | tar -xf ARCHIVE.tar [-C DIR]".into();
+        }
+
+        let mut mode = "";
+        let mut archive = "";
+        let mut dest_dir = ".";
+        let mut paths: Vec<&str> = Vec::new();
+        let mut i = 0;
+
+        while i < args.len() {
+            match args[i] {
+                "-cf" => {
+                    mode = "create";
+                    if i + 1 >= args.len() {
+                        return "tar: option '-cf' requires ARCHIVE argument".into();
+                    }
+                    archive = args[i + 1];
+                    i += 2;
+                }
+                "-tf" => {
+                    mode = "list";
+                    if i + 1 >= args.len() {
+                        return "tar: option '-tf' requires ARCHIVE argument".into();
+                    }
+                    archive = args[i + 1];
+                    i += 2;
+                }
+                "-xf" => {
+                    mode = "extract";
+                    if i + 1 >= args.len() {
+                        return "tar: option '-xf' requires ARCHIVE argument".into();
+                    }
+                    archive = args[i + 1];
+                    i += 2;
+                }
+                "-C" => {
+                    if i + 1 >= args.len() {
+                        return "tar: option '-C' requires DIR argument".into();
+                    }
+                    dest_dir = args[i + 1];
+                    i += 2;
+                }
+                value if value.starts_with('-') => {
+                    return format!("tar: unsupported option '{}'", value);
+                }
+                value => {
+                    paths.push(value);
+                    i += 1;
+                }
+            }
+        }
+
+        if archive.is_empty() || mode.is_empty() {
+            return "tar: missing operation mode (-cf/-tf/-xf) or archive path".into();
+        }
+
+        if mode == "create" {
+            if paths.is_empty() {
+                return "tar: Cowardly refusing to create an empty archive".into();
+            }
+
+            let mut entries = Vec::new();
+            for input in paths {
+                if self.kernel.fs.resolve(input).is_none() {
+                    return format!("tar: {}: Cannot stat: No such file or directory", input);
+                }
+                self.collect_tree_paths(input, &mut entries);
+            }
+
+            let mut lines = vec!["KP_TAR1".to_string()];
+            for (path, is_dir) in entries {
+                if is_dir {
+                    lines.push(format!("D\t{}", path));
+                } else {
+                    let data = match self.read_file_bytes(&path) {
+                        Ok(bytes) => bytes,
+                        Err(e) => return format!("tar: {}", e),
+                    };
+                    lines.push(format!("F\t{}\t{}", path, crate::cpp_accel::b64_encode(&data)));
+                }
+            }
+
+            let payload = lines.join("\n");
+            let res = if self.kernel.fs.resolve(archive).is_some() {
+                self.kernel.fs.write_file(archive, &payload)
+            } else {
+                self.kernel.fs.create_file(archive, &payload)
+            };
+            return match res {
+                Ok(()) => format!("tar: created {}", archive),
+                Err(e) => format!("tar: {}", e),
+            };
+        }
+
+        let Some(node) = self.kernel.fs.resolve(archive) else {
+            return format!("tar: {}: Cannot open: No such file or directory", archive);
+        };
+        if node.is_dir {
+            return format!("tar: {}: Is a directory", archive);
+        }
+        let archive_data = node.data.clone();
+
+        let mut lines = archive_data.lines();
+        let Some(magic) = lines.next() else {
+            return format!("tar: {}: Empty archive", archive);
+        };
+        if magic != "KP_TAR1" {
+            return format!("tar: {}: Unrecognized archive format", archive);
+        }
+
+        if mode == "list" {
+            let mut out = Vec::new();
+            for line in lines {
+                if let Some(path) = line.strip_prefix("D\t") {
+                    out.push(format!("{}/", path.trim_end_matches('/')));
+                } else if let Some(rest) = line.strip_prefix("F\t") {
+                    if let Some((path, _b64)) = rest.split_once('\t') {
+                        out.push(path.to_string());
+                    }
+                }
+            }
+            return out.join("\n");
+        }
+
+        if let Err(e) = self.ensure_dir_all(dest_dir) {
+            return format!("tar: cannot create extraction directory '{}': {}", dest_dir, e);
+        }
+
+        let base = self.kernel.fs.normalize(dest_dir);
+        let mut extracted = Vec::new();
+        for line in lines {
+            if let Some(path) = line.strip_prefix("D\t") {
+                let rel = path.trim_start_matches('/');
+                let out_path = Self::join_virtual_path(&base, rel);
+                if let Err(e) = self.ensure_dir_all(&out_path) {
+                    return format!("tar: {}", e);
+                }
+                extracted.push(out_path);
+            } else if let Some(rest) = line.strip_prefix("F\t") {
+                let Some((path, b64)) = rest.split_once('\t') else {
+                    return "tar: malformed file entry".into();
+                };
+                let rel = path.trim_start_matches('/');
+                let out_path = Self::join_virtual_path(&base, rel);
+                if let Some((parent, _)) = out_path.rsplit_once('/') {
+                    let pd = if parent.is_empty() { "/" } else { parent };
+                    if let Err(e) = self.ensure_dir_all(pd) {
+                        return format!("tar: {}", e);
+                    }
+                }
+                let data = match crate::cpp_accel::b64_decode(b64) {
+                    Ok(v) => v,
+                    Err(_) => return "tar: malformed base64 payload".into(),
+                };
+                if let Err(e) = self.write_file_bytes(&out_path, &data) {
+                    return format!("tar: {}", e);
+                }
+                extracted.push(out_path);
+            }
+        }
+
+        if extracted.is_empty() {
+            format!("tar: extracted no entries from {}", archive)
+        } else {
+            extracted.join("\n")
+        }
     }
 
     fn cmd_gzip(&mut self, args: &[&str], cmd: &str) -> String {
@@ -1880,116 +2075,424 @@ impl System {
         }
     }
 
-    fn cmd_apt(&self, args: &[&str]) -> String {
+    fn apt_catalog() -> [(&'static str, &'static str, u32, &'static str); 10] {
+        [
+            ("nano", "7.2-1", 1632, "small, friendly text editor inspired by Pico"),
+            ("vim", "9.0-3", 8420, "Vi IMproved - enhanced vi editor"),
+            ("htop", "3.3.0-1", 512, "interactive process viewer"),
+            ("cmatrix", "2.0-4", 296, "simulates the Matrix digital rain"),
+            ("curl", "8.7.1-1", 2304, "command line tool for transferring data with URL syntax"),
+            ("wget", "1.21.4-2", 1480, "retrieves files from the web"),
+            ("git", "2.46.0-1", 12640, "fast, scalable, distributed revision control system"),
+            ("openssh-server", "9.8p1-1", 2630, "secure shell (SSH) server"),
+            ("net-tools", "2.10-1", 720, "NET-3 networking toolkit"),
+            ("python3", "3.12.2-1", 11240, "interactive high-level object-oriented language"),
+        ]
+    }
+
+    fn apt_read_installed(&self) -> BTreeMap<String, String> {
+        let mut installed = BTreeMap::new();
+        if let Some(node) = self.kernel.fs.resolve("/var/lib/apt/installed.db") {
+            for line in node.data.lines() {
+                if let Some((name, ver)) = line.split_once(' ') {
+                    if !name.trim().is_empty() && !ver.trim().is_empty() {
+                        installed.insert(name.trim().to_string(), ver.trim().to_string());
+                    }
+                }
+            }
+        }
+        installed
+    }
+
+    fn apt_write_installed(&mut self, installed: &BTreeMap<String, String>) -> Result<(), String> {
+        self.ensure_dir_all("/var/lib/apt")?;
+        let data = installed
+            .iter()
+            .map(|(name, ver)| format!("{} {}", name, ver))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if self.kernel.fs.resolve("/var/lib/apt/installed.db").is_some() {
+            self.kernel
+                .fs
+                .write_file("/var/lib/apt/installed.db", &data)
+                .map_err(|e| e.to_string())
+        } else {
+            self.kernel
+                .fs
+                .create_file("/var/lib/apt/installed.db", &data)
+                .map_err(|e| e.to_string())
+        }
+    }
+
+    fn cmd_apt(&mut self, args: &[&str]) -> String {
         if args.is_empty() {
             return "usage: apt [install|remove|update|upgrade|search] [package]".into();
         }
+
+        let catalog = Self::apt_catalog();
+        let mut installed = self.apt_read_installed();
+
         match args[0] {
-            "update" => "Reading package lists... Done\nBuilding dependency tree... Done\nAll packages are up to date.".into(),
-            "upgrade" => "Reading package lists... Done\nBuilding dependency tree... Done\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.".into(),
+            "update" => {
+                if let Err(e) = self.ensure_dir_all("/var/lib/apt/lists") {
+                    return format!("E: failed to prepare package lists: {}", e);
+                }
+                let stamp = format!("{}", js_sys::Date::new_0().to_string());
+                let _ = self
+                    .kernel
+                    .fs
+                    .write_file("/var/lib/apt/lists/last_update", &stamp)
+                    .or_else(|_| self.kernel.fs.create_file("/var/lib/apt/lists/last_update", &stamp));
+                "Hit:1 https://archive.kpawnd.local stable InRelease\nReading package lists... Done\nBuilding dependency tree... Done\nAll packages are up to date.".into()
+            }
+            "upgrade" => {
+                let mut upgraded = 0usize;
+                for (name, _installed_ver) in installed.clone() {
+                    if let Some((_, latest_ver, _, _)) = catalog.iter().find(|(pkg, _, _, _)| *pkg == name) {
+                        if installed.get(&name) != Some(&latest_ver.to_string()) {
+                            installed.insert(name.clone(), (*latest_ver).to_string());
+                            upgraded += 1;
+                        }
+                    }
+                }
+                if upgraded > 0 {
+                    if let Err(e) = self.apt_write_installed(&installed) {
+                        return format!("E: failed to write package database: {}", e);
+                    }
+                }
+                format!(
+                    "Reading package lists... Done\nBuilding dependency tree... Done\n{} upgraded, 0 newly installed, 0 to remove and 0 not upgraded.",
+                    upgraded
+                )
+            }
             "install" => {
                 if args.len() < 2 {
                     return "usage: apt install [package]".into();
                 }
-                format!("Reading package lists... Done\nBuilding dependency tree... Done\nThe following NEW packages will be installed:\n  {}\n0 upgraded, 1 newly installed, 0 to remove.\nNeed to get 1024 kB of archives.\nAfter this operation, 4096 kB of additional disk space will be used.\nGet:1 http://archive.ubuntu.com/ubuntu {} [1024 kB]\nFetched 1024 kB in 1s\nSelecting previously unselected package {}.\nPreparing to unpack .../{}_{}_amd64.deb ...\nUnpacking {} ...\nSetting up {} ...", args[1], args[1], args[1], args[1], "1.0.0", args[1], args[1])
+                let package = args[1];
+                let Some((_, version, size_kb, _desc)) = catalog.iter().find(|(name, _, _, _)| *name == package) else {
+                    return format!("E: Unable to locate package {}", package);
+                };
+
+                if let Some(installed_ver) = installed.get(package) {
+                    return format!(
+                        "Reading package lists... Done\nBuilding dependency tree... Done\n{} is already the newest version ({}).\n0 upgraded, 0 newly installed, 0 to remove.",
+                        package, installed_ver
+                    );
+                }
+
+                installed.insert(package.to_string(), (*version).to_string());
+                if let Err(e) = self.apt_write_installed(&installed) {
+                    return format!("E: failed to write package database: {}", e);
+                }
+
+                format!(
+                    "Reading package lists... Done\nBuilding dependency tree... Done\nThe following NEW packages will be installed:\n  {}\n0 upgraded, 1 newly installed, 0 to remove.\nNeed to get {} kB of archives.\nAfter this operation, {} kB of additional disk space will be used.\nGet:1 https://archive.kpawnd.local stable/main amd64 {} {} [{} kB]\nFetched {} kB in 1s\nSelecting previously unselected package {}.\nPreparing to unpack .../{}_{}_amd64.deb ...\nUnpacking {} ({}) ...\nSetting up {} ({}) ...",
+                    package,
+                    size_kb,
+                    size_kb * 3,
+                    package,
+                    version,
+                    size_kb,
+                    size_kb,
+                    package,
+                    package,
+                    version,
+                    package,
+                    version,
+                    package,
+                    version
+                )
             }
             "remove" => {
                 if args.len() < 2 {
                     return "usage: apt remove [package]".into();
                 }
-                format!("Reading package lists... Done\nBuilding dependency tree... Done\nThe following packages will be REMOVED:\n  {}\n0 upgraded, 0 newly installed, 1 to remove.\nAfter this operation, 4096 kB disk space will be freed.\nRemoving {} ...", args[1], args[1])
+                let package = args[1];
+                let Some(installed_ver) = installed.remove(package) else {
+                    return format!(
+                        "Reading package lists... Done\nBuilding dependency tree... Done\nPackage '{}' is not installed, so not removed.",
+                        package
+                    );
+                };
+                if let Err(e) = self.apt_write_installed(&installed) {
+                    return format!("E: failed to write package database: {}", e);
+                }
+                format!(
+                    "Reading package lists... Done\nBuilding dependency tree... Done\nThe following packages will be REMOVED:\n  {}\n0 upgraded, 0 newly installed, 1 to remove.\nAfter this operation, 0 kB disk space will be freed.\nRemoving {} ({}) ...",
+                    package, package, installed_ver
+                )
             }
             "search" => {
                 if args.len() < 2 {
                     return "usage: apt search [query]".into();
                 }
-                "Sorting... Done\nFull Text Search... Done\nvim/stable 8.2.2434-3 amd64\n  Vi IMproved - enhanced vi editor\n\nnano/stable 5.4-2 amd64\n  small, friendly text editor inspired by Pico".to_string()
+                let query = args[1].to_lowercase();
+                let mut matches = Vec::new();
+                for (name, ver, _size, desc) in &catalog {
+                    if name.contains(&query) || desc.to_lowercase().contains(&query) {
+                        matches.push(format!("{}/stable {} amd64\n  {}", name, ver, desc));
+                    }
+                }
+                if matches.is_empty() {
+                    return format!("Sorting... Done\nFull Text Search... Done\nNo packages found matching {}", args[1]);
+                }
+                format!("Sorting... Done\nFull Text Search... Done\n{}", matches.join("\n\n"))
             }
             _ => format!("E: Invalid operation {}", args[0]),
         }
     }
 
-    fn cmd_top(&self) -> String {
-        let total_mem = self.kernel.mem.total;
-        let free_mem = self.kernel.mem.free;
-        let used_mem = total_mem - free_mem;
-        format!(
-            "top - {}  up {}ms,  1 user,  load average: 0.00, 0.00, 0.00\n\
-             Tasks: {} total,   1 running,   {} sleeping,   0 stopped,   0 zombie\n\
-             %Cpu(s):  0.3 us,  0.1 sy,  0.0 ni, 99.6 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st\n\
-             MiB Mem :   {}.0 total,   {}.0 free,   {}.0 used,   {}.0 buff/cache\n\n\
-             PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n",
-            "12:00:00",
-            self.kernel.uptime_ms(),
-            self.kernel.proc.list().len(),
-            self.kernel.proc.list().len() - 1,
-            total_mem / 1024 / 1024,
-            free_mem / 1024 / 1024,
-            used_mem / 1024 / 1024,
-            0
-        )
+    fn format_uptime_hms(total_seconds: u64) -> String {
+        let h = total_seconds / 3600;
+        let m = (total_seconds % 3600) / 60;
+        let s = total_seconds % 60;
+        format!("{:02}:{:02}:{:02}", h, m, s)
     }
 
-    fn cmd_htop(&self) -> String {
+    fn proc_state_char(state: ProcState) -> char {
+        match state {
+            ProcState::Run => 'R',
+            ProcState::Sleep => 'S',
+            ProcState::Stop => 'T',
+            ProcState::Zombie => 'Z',
+        }
+    }
+
+    fn synthetic_proc_cpu(&self, p: &Process) -> f64 {
+        let base = match p.priority {
+            Priority::High => 4.0,
+            Priority::Normal => 1.8,
+            Priority::Low => 0.7,
+        };
+        let running_bonus = if self.kernel.scheduler.current() == Some(p.pid) {
+            6.0
+        } else {
+            0.0
+        };
+        let jitter = ((self.kernel.ticks / 97 + p.pid as u64) % 11) as f64 * 0.13;
+        (base + running_bonus + jitter).min(99.9)
+    }
+
+    fn cmd_top(&self, _args: &[&str]) -> String {
         let total_mem = self.kernel.mem.total;
         let free_mem = self.kernel.mem.free;
         let used_mem = total_mem - free_mem;
+        let proc_list = self.kernel.proc.list();
+        let tasks_total = proc_list.len();
+        let tasks_running = proc_list
+            .iter()
+            .filter(|p| p.state == ProcState::Run)
+            .count()
+            .max(1);
+        let tasks_sleeping = proc_list
+            .iter()
+            .filter(|p| p.state == ProcState::Sleep)
+            .count();
+        let tasks_stopped = proc_list
+            .iter()
+            .filter(|p| p.state == ProcState::Stop)
+            .count();
+        let tasks_zombie = proc_list
+            .iter()
+            .filter(|p| p.state == ProcState::Zombie)
+            .count();
+
+        let avg_cpu = if tasks_total > 0 {
+            proc_list
+                .iter()
+                .map(|p| self.synthetic_proc_cpu(p))
+                .sum::<f64>()
+                / tasks_total as f64
+        } else {
+            0.0
+        };
+        let user_cpu = (avg_cpu * 0.74).min(99.9);
+        let sys_cpu = (avg_cpu * 0.23).min(99.9 - user_cpu);
+        let idle_cpu = (100.0 - user_cpu - sys_cpu).max(0.0);
+
+        let uptime = Self::format_uptime_hms(self.kernel.uptime_ms() / 1000);
+        let load1 = (tasks_running as f64 * 0.56).min(9.99);
+        let load5 = (tasks_running as f64 * 0.34).min(9.99);
+        let load15 = (tasks_running as f64 * 0.21).min(9.99);
+
+        let mut out = format!(
+            "top - {} up {}, 1 user, load average: {:.2}, {:.2}, {:.2}\n\
+Tasks: {} total, {} running, {} sleeping, {} stopped, {} zombie\n\
+%Cpu(s): {:>4.1} us, {:>4.1} sy,  0.0 ni, {:>4.1} id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st\n\
+MiB Mem : {:>7.1} total, {:>7.1} free, {:>7.1} used, {:>7.1} buff/cache\n\n\
+ PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n",
+            js_sys::Date::new_0().to_locale_time_string("en-GB"),
+            uptime,
+            load1,
+            load5,
+            load15,
+            tasks_total,
+            tasks_running,
+            tasks_sleeping,
+            tasks_stopped,
+            tasks_zombie,
+            user_cpu,
+            sys_cpu,
+            idle_cpu,
+            total_mem as f64 / (1024.0 * 1024.0),
+            free_mem as f64 / (1024.0 * 1024.0),
+            used_mem as f64 / (1024.0 * 1024.0),
+            (total_mem as f64 * 0.05) / (1024.0 * 1024.0)
+        );
+
+        let mut rows: Vec<_> = proc_list
+            .iter()
+            .map(|p| {
+                let cpu = self.synthetic_proc_cpu(p);
+                let mem_pct = if total_mem > 0 {
+                    (p.memory_size as f64 / total_mem as f64) * 100.0
+                } else {
+                    0.0
+                };
+                (p.pid, p.ppid, p.name.clone(), p.state, p.priority, p.memory_size, cpu, mem_pct)
+            })
+            .collect();
+        rows.sort_by(|a, b| b.6.partial_cmp(&a.6).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (pid, _ppid, name, state, prio, mem_size, cpu, mem_pct) in rows.into_iter().take(14) {
+            let pr = match prio {
+                Priority::High => 15,
+                Priority::Normal => 20,
+                Priority::Low => 25,
+            };
+            out.push_str(&format!(
+                "{:>4} {:<8} {:>2}  {:>2} {:>7} {:>6} {:>6} {} {:>5.1} {:>5.1} {:>8} {}\n",
+                pid,
+                "user",
+                pr,
+                0,
+                format!("{}K", mem_size / 1024 * 4),
+                format!("{}K", mem_size / 1024),
+                format!("{}K", mem_size / 4096),
+                Self::proc_state_char(state),
+                cpu,
+                mem_pct,
+                format!("00:{:02}.{:02}", (pid * 3) % 60, (pid * 7) % 100),
+                name
+            ));
+        }
+        out
+    }
+
+    fn cmd_htop(&self, _args: &[&str]) -> String {
+        let total_mem = self.kernel.mem.total;
+        let free_mem = self.kernel.mem.free;
+        let used_mem = total_mem - free_mem;
+        let proc_list = self.kernel.proc.list();
+        let task_total = proc_list.len();
+        let task_running = proc_list
+            .iter()
+            .filter(|p| p.state == ProcState::Run)
+            .count()
+            .max(1);
+        let task_sleep = proc_list
+            .iter()
+            .filter(|p| p.state == ProcState::Sleep)
+            .count();
+        let task_stop = proc_list
+            .iter()
+            .filter(|p| p.state == ProcState::Stop)
+            .count();
+        let uptime_s = self.kernel.uptime_ms() / 1000;
+
         let mem_pct = if total_mem > 0 {
             (used_mem as f64 / total_mem as f64) * 100.0
         } else {
             0.0
         };
 
-        let proc_list = self.kernel.proc.list();
-        let task_total = proc_list.len();
-        let task_sleep = task_total.saturating_sub(1);
-        let uptime_s = self.kernel.uptime_ms() / 1000;
+        let cpu_avg = if task_total > 0 {
+            proc_list
+                .iter()
+                .map(|p| self.synthetic_proc_cpu(p))
+                .sum::<f64>()
+                / task_total as f64
+        } else {
+            0.0
+        };
+
+        let bar = |pct: f64| {
+            let width = 24usize;
+            let fill = ((pct / 100.0) * width as f64).round() as usize;
+            format!("{}{}", "|".repeat(fill.min(width)), " ".repeat(width.saturating_sub(fill.min(width))))
+        };
 
         let mut out = String::new();
         out.push_str(&format!(
-            "htop - kpawnd Linux | uptime {}s\nTasks: {} total, 1 running, {} sleeping\nCPU: [#---------] 3.0%  MEM: [{:<10}] {:>5.1}%  SWP: [----------] 0.0%\n\n",
-            uptime_s,
-            task_total,
-            task_sleep,
-            "#".repeat(((mem_pct / 10.0).round() as usize).min(10)),
-            mem_pct
+            "htop - kpawnd Linux  |  uptime {}  |  load average {:.2} {:.2} {:.2}\n",
+            Self::format_uptime_hms(uptime_s),
+            (task_running as f64 * 0.55).min(9.99),
+            (task_running as f64 * 0.35).min(9.99),
+            (task_running as f64 * 0.24).min(9.99)
         ));
-        out.push_str(" PID  USER      PRI  NI   VIRT   RES   SHR S  CPU% MEM%  TIME+  COMMAND\n");
+        out.push_str(&format!(
+            "Tasks: {} total, {} running, {} sleeping, {} stopped\n",
+            task_total,
+            task_running,
+            task_sleep,
+            task_stop
+        ));
+        out.push_str(&format!("CPU [ {} ] {:>5.1}%\n", bar(cpu_avg), cpu_avg));
+        out.push_str(&format!(
+            "MEM [ {} ] {:>5.1}%   {}/{} MiB\n",
+            bar(mem_pct),
+            mem_pct,
+            (used_mem / 1024 / 1024),
+            (total_mem / 1024 / 1024)
+        ));
+        out.push_str("SWP [                        ]   0.0%   0/0 MiB\n\n");
+        out.push_str(" PID USER      PRI  NI   VIRT   RES   SHR S CPU% MEM%   TIME+  Command\n");
 
-        for p in proc_list {
-            let state = match p.state {
-                ProcState::Run => "R",
-                ProcState::Sleep => "S",
-                ProcState::Stop => "T",
-                ProcState::Zombie => "Z",
-            };
-            out.push_str(&format!(
-                "{:>4} {:<8} {:>4} {:>3} {:>6} {:>5} {:>5} {} {:>5.1} {:>4.1} {:>6}  {}\n",
-                p.pid,
-                "user",
-                20,
-                0,
-                "32M",
-                "8M",
-                "2M",
-                state,
-                if state == "R" { 3.0 } else { 0.1 },
-                if total_mem > 0 {
-                    (8.0 * 1024.0 * 1024.0 / total_mem as f64) * 100.0
+        let mut rows: Vec<_> = proc_list
+            .iter()
+            .map(|p| {
+                let cpu = self.synthetic_proc_cpu(p);
+                let mem = if total_mem > 0 {
+                    (p.memory_size as f64 / total_mem as f64) * 100.0
                 } else {
                     0.0
-                },
-                "00:00",
+                };
+                (p, cpu, mem)
+            })
+            .collect();
+        rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (p, cpu_pct, mem_pct_proc) in rows {
+            let pri = match p.priority {
+                Priority::High => 10,
+                Priority::Normal => 20,
+                Priority::Low => 30,
+            };
+            out.push_str(&format!(
+                "{:>4} {:<8} {:>3} {:>3} {:>6} {:>5} {:>5} {} {:>4.1} {:>4.1} {:>7}  {}\n",
+                p.pid,
+                "user",
+                pri,
+                0,
+                format!("{}K", (p.memory_size / 1024) * 4),
+                format!("{}K", p.memory_size / 1024),
+                format!("{}K", p.memory_size / 4096),
+                Self::proc_state_char(p.state),
+                cpu_pct,
+                mem_pct_proc,
+                format!("{}:{:02}.{:02}", (p.pid / 7) % 99, (p.pid * 5) % 60, (p.pid * 3) % 100),
                 p.name
             ));
         }
 
-        out.push_str("\nHint: use `top` for compact view, `ps` for snapshot.");
+        out.push_str("\nF1Help F2Setup F3Search F4Filter F5Tree F6SortBy F9Kill F10Quit");
         out
     }
 
     fn cmd_help(&self) -> String {
-        "kpawnd terminal help\n\nCore filesystem:\n  ls cd pwd cat cp mv rm rmdir mkdir touch ln file find stat\n  chmod chown mount umount\n\nText processing:\n  grep awk sed sort uniq wc cksum head tail cut tr tee diff\n\nSystem and process:\n  ps top htop kill jobs bg fg disown nohup free df du\n  uname hostname id groups who whoami uptime date env export history clear\n\nNetwork:\n  ip ifconfig route arp ss netstat ping traceroute host dig\n  nslookup curl wget nc myip\n\nTooling and shell:\n  man which whereis alias unalias source sudo python nano vi service\n\nBoot and extras:\n  grub hasgrub reboot screensaver doom doommap\n\nQoL:\n  Tab autocomplete, ArrowUp/ArrowDown history, Ctrl+L clear line, Ctrl+C cancel line\n  man -k <term> to search docs\n\nUse `man <command>` for details.".into()
+        "kpawnd terminal help\n\nCore filesystem:\n  ls cd pwd cat cp mv rm rmdir mkdir touch ln file find stat\n  chmod chown mount umount\n\nText processing:\n  grep awk sed sort uniq wc cksum head tail cut tr tee diff\n\nSystem and process:\n  ps top htop kill jobs bg fg disown nohup free df du\n  uname hostname id groups who whoami uptime date env export history clear\n\nNetwork:\n  ip ifconfig route arp ss netstat ping traceroute host dig\n  nslookup curl wget nc myip\n\nTooling and shell:\n  man which whereis alias unalias source sudo python nano vi service\n\nBoot and extras:\n  grub hasgrub reboot screensaver cmatrix doom doommap\n\nQoL:\n  Tab autocomplete, ArrowUp/ArrowDown history, Ctrl+L clear line, Ctrl+C cancel line\n  man -k <term> to search docs\n\nUse `man <command>` for details.".into()
     }
 
     fn cmd_awk(&self, args: &[&str]) -> String {
@@ -2328,6 +2831,7 @@ impl System {
                 | "arp"
                 | "awk"
                 | "cat"
+                | "cmatrix"
                 | "cd"
                 | "cksum"
                 | "chmod"
@@ -2668,7 +3172,7 @@ impl System {
             }
             let needle = args[1].to_lowercase();
             let pages = [
-                "alias", "apt", "cat", "cd", "cksum", "chmod", "chown", "clear", "cp", "curl",
+                "alias", "apt", "cat", "cmatrix", "cd", "cksum", "chmod", "chown", "clear", "cp", "curl",
                 "cut", "date", "df", "diff", "du", "echo", "find", "free", "grep", "head", "help",
                 "history", "host", "hostname", "htop", "id", "groups", "who", "kill", "jobs", "bg",
                 "fg", "disown", "nohup", "ln", "ls", "man", "mkdir", "mount", "umount", "mv",
@@ -3013,7 +3517,8 @@ DESCRIPTION
        an ICMP ECHO_RESPONSE from a host or gateway.
 
 NOTE
-       This implementation uses HTTP to simulate ping via a proxy service.
+    In browser mode this uses fetch timing as a best-effort RTT estimate;
+    raw ICMP is not available in the web sandbox.
 "#
                 .into()
             }
@@ -3660,10 +4165,11 @@ SYNOPSIS
             htop
 
 DESCRIPTION
-            htop shows a richer process and resource view than top:
-            CPU summary, memory bar, and process table.
+            htop shows an htop-style process and resource view with:
+            CPU/memory/swap bars, task counters, and sorted process table.
 
-            In kpawnd this is a non-interactive snapshot designed to match htop style.
+            This implementation updates metrics from the simulated kernel and
+            process scheduler each time htop is invoked.
 "#
                 .into()
             }
@@ -3906,25 +4412,6 @@ SEE ALSO
             "\nProto Recv-Q Send-Q Local Address           Foreign Address         State\n",
         );
 
-        // Include baseline listening sockets.
-        if show_all || show_listening {
-            if show_tcp {
-                out.push_str(
-                    "tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN\n",
-                );
-                out.push_str(
-                    "tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN\n",
-                );
-                out.push_str(
-                    "tcp        0      0 127.0.0.1:631           0.0.0.0:*               LISTEN\n",
-                );
-            }
-            if show_udp {
-                out.push_str("udp        0      0 0.0.0.0:68              0.0.0.0:*                           \n");
-                out.push_str("udp        0      0 0.0.0.0:5353            0.0.0.0:*                           \n");
-            }
-        }
-
         // Add actual sockets
         for socket_line in self.network.list_sockets() {
             out.push_str(&socket_line);
@@ -3936,19 +4423,11 @@ SEE ALSO
     }
 
     fn cmd_ss(&self, args: &[&str]) -> String {
-        let show_all = args.contains(&"-a");
-        let show_listening = args.contains(&"-l");
-        let show_tcp = args.contains(&"-t") || args.is_empty();
         let show_numeric = args.contains(&"-n");
 
         let mut out = String::from(
             "Netid  State      Recv-Q Send-Q Local Address:Port    Peer Address:Port\n",
         );
-
-        if (show_all || show_listening) && show_tcp {
-            out.push_str("tcp    LISTEN     0      128    0.0.0.0:22             0.0.0.0:*\n");
-            out.push_str("tcp    LISTEN     0      128    0.0.0.0:80             0.0.0.0:*\n");
-        }
 
         for socket_line in self.network.list_sockets() {
             out.push_str("tcp    ");
@@ -3995,35 +4474,21 @@ SEE ALSO
         if args.is_empty() {
             return "usage: traceroute <host>".to_string();
         }
-
         let host = args.last().unwrap_or(&"");
-        let hops = self.network.traceroute_hops(host);
-
-        let mut out = format!(
-            "traceroute to {} ({}), 30 hops max, 60 byte packets\n",
-            host,
-            hops.last()
-                .map(|(_, ip, _)| ip.as_str())
-                .unwrap_or("0.0.0.0")
-        );
-
-        for (hop, ip, time) in hops {
-            out.push_str(&format!(
-                " {:2}  {}  {:.3} ms  {:.3} ms  {:.3} ms\n",
-                hop,
-                ip,
-                time,
-                time + 0.1,
-                time + 0.2
-            ));
-        }
-
-        out
+        format!(
+            "traceroute: {}: unsupported in browser sandbox (raw UDP/ICMP sockets unavailable)",
+            host
+        )
     }
 
     fn cmd_ifconfig(&self, args: &[&str]) -> String {
         let interfaces = self.network.get_interfaces();
         let filter = args.first().copied();
+
+        if interfaces.is_empty() {
+            return "ifconfig: unsupported in browser sandbox (network interface details unavailable)"
+                .to_string();
+        }
 
         let mut out = String::new();
         for iface in &interfaces {
@@ -4086,8 +4551,13 @@ SEE ALSO
 
         match args[0] {
             "addr" | "a" | "address" => {
+                let interfaces = self.network.get_interfaces();
+                if interfaces.is_empty() {
+                    return "ip: unsupported in browser sandbox (address details unavailable)"
+                        .to_string();
+                }
                 let mut out = String::new();
-                for (i, iface) in self.network.get_interfaces().iter().enumerate() {
+                for (i, iface) in interfaces.iter().enumerate() {
                     let state = if iface.is_up { "UP" } else { "DOWN" };
                     out.push_str(&format!(
                         "{}: {}: <BROADCAST,MULTICAST,{}> mtu {} state {}\n",
@@ -4110,8 +4580,13 @@ SEE ALSO
                 out
             }
             "link" | "l" => {
+                let interfaces = self.network.get_interfaces();
+                if interfaces.is_empty() {
+                    return "ip: unsupported in browser sandbox (link details unavailable)"
+                        .to_string();
+                }
                 let mut out = String::new();
-                for (i, iface) in self.network.get_interfaces().iter().enumerate() {
+                for (i, iface) in interfaces.iter().enumerate() {
                     let state = if iface.is_up { "UP" } else { "DOWN" };
                     out.push_str(&format!(
                         "{}: {}: <BROADCAST,MULTICAST,{}> mtu {} state {}\n",
@@ -4137,6 +4612,10 @@ SEE ALSO
     fn cmd_route(&self, args: &[&str]) -> String {
         if args.first() == Some(&"-n") || args.is_empty() {
             let routes = self.network.get_routes();
+            if routes.is_empty() {
+                return "route: unsupported in browser sandbox (kernel routing table unavailable)"
+                    .to_string();
+            }
             let mut out = String::from("Kernel IP routing table\n");
             out.push_str(
                 "Destination     Gateway         Genmask         Flags Metric Ref    Use Iface\n",
@@ -4163,6 +4642,10 @@ SEE ALSO
     fn cmd_arp(&self, args: &[&str]) -> String {
         let show_numeric = args.contains(&"-n");
         let arp_entries = self.network.arp_table();
+
+        if arp_entries.is_empty() {
+            return "arp: unsupported in browser sandbox (ARP cache unavailable)".to_string();
+        }
 
         let mut out = String::from(
             "Address                  HWtype  HWaddress           Flags Mask  Iface\n",
@@ -4514,6 +4997,7 @@ SEE ALSO
             "arp",
             "awk",
             "cat",
+            "cmatrix",
             "cd",
             "cksum",
             "chmod",
@@ -4739,6 +5223,26 @@ SEE ALSO
             arr.push(&JsValue::from_str(&message));
         }
         arr
+    }
+
+    #[wasm_bindgen]
+    pub fn boot_set_cmdline(&mut self, cmdline: &str) {
+        self.boot.set_cmdline(cmdline);
+    }
+
+    #[wasm_bindgen]
+    pub fn boot_get_cmdline(&self) -> String {
+        self.boot.get_cmdline()
+    }
+
+    #[wasm_bindgen]
+    pub fn boot_set_kernel_version(&mut self, version: &str) {
+        self.boot.set_kernel_version(version);
+    }
+
+    #[wasm_bindgen]
+    pub fn boot_get_kernel_version(&self) -> String {
+        self.boot.get_kernel_version()
     }
 
     /// Initialize system with persistence loading

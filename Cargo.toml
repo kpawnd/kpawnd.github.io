@@ -66,5 +66,12 @@ opt-level = "z"     # Optimize for size
 lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce parallel code generation units to optimize better
 
+[profile.dev]
+opt-level = 1
+debug = true
+codegen-units = 16
+lto = false
+incremental = true
+
 [build-dependencies]
 cc = "1.1"

@@ -39,57 +39,6 @@ pub struct NetworkInterface {
     pub is_loopback: bool,
 }
 
-impl NetworkInterface {
-    pub fn loopback() -> Self {
-        NetworkInterface {
-            name: "lo".to_string(),
-            ipv4: "127.0.0.1".to_string(),
-            ipv6: "::1".to_string(),
-            mac: "00:00:00:00:00:00".to_string(),
-            mtu: 65536,
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_packets: 0,
-            tx_packets: 0,
-            is_up: true,
-            is_loopback: true,
-        }
-    }
-
-    pub fn eth0() -> Self {
-        // Simulate eth0 with random-ish MAC
-        NetworkInterface {
-            name: "eth0".to_string(),
-            ipv4: "192.168.1.100".to_string(),
-            ipv6: "fe80::1".to_string(),
-            mac: "02:42:ac:11:00:02".to_string(),
-            mtu: 1500,
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_packets: 0,
-            tx_packets: 0,
-            is_up: true,
-            is_loopback: false,
-        }
-    }
-
-    pub fn wlan0() -> Self {
-        NetworkInterface {
-            name: "wlan0".to_string(),
-            ipv4: "192.168.1.101".to_string(),
-            ipv6: "fe80::2".to_string(),
-            mac: "02:42:ac:11:00:03".to_string(),
-            mtu: 1500,
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_packets: 0,
-            tx_packets: 0,
-            is_up: false,
-            is_loopback: false,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct DnsRecord {
     pub name: String,
@@ -145,8 +94,10 @@ impl Socket {
                 self.ws = Some(ws);
                 self.url = Some(url.to_string());
                 self.state = SocketState::Connecting;
-                self.local_port = 40000 + (self.id % 10000) as u16;
-                self.remote_port = 443;
+                self.local_port = 0;
+                let (host, port) = parse_remote_endpoint(url);
+                self.remote_addr = host;
+                self.remote_port = port;
                 Ok(())
             }
             Err(e) => Err(format!("Failed to create WebSocket: {:?}", e)),
@@ -170,6 +121,25 @@ impl Socket {
         }
         Ok(())
     }
+}
+
+fn parse_remote_endpoint(url: &str) -> (String, u16) {
+    let lower = url.to_lowercase();
+    let default_port = if lower.starts_with("wss://") { 443 } else { 80 };
+    let without_scheme = if let Some(pos) = url.find("://") {
+        &url[pos + 3..]
+    } else {
+        url
+    };
+    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
+
+    if let Some((host, port_str)) = host_port.rsplit_once(':') {
+        if let Ok(port) = port_str.parse::<u16>() {
+            return (host.to_string(), port);
+        }
+    }
+
+    (host_port.to_string(), default_port)
 }
 
 pub struct NetworkStack {
@@ -253,143 +223,30 @@ impl NetworkStack {
     }
 
     pub fn get_interfaces(&self) -> Vec<NetworkInterface> {
-        vec![
-            NetworkInterface::loopback(),
-            NetworkInterface::eth0(),
-            NetworkInterface::wlan0(),
-        ]
+        Vec::new()
     }
 
     pub fn get_routes(&self) -> Vec<RouteEntry> {
-        vec![
-            RouteEntry {
-                destination: "0.0.0.0".to_string(),
-                gateway: "192.168.1.1".to_string(),
-                genmask: "0.0.0.0".to_string(),
-                flags: "UG".to_string(),
-                iface: "eth0".to_string(),
-            },
-            RouteEntry {
-                destination: "192.168.1.0".to_string(),
-                gateway: "0.0.0.0".to_string(),
-                genmask: "255.255.255.0".to_string(),
-                flags: "U".to_string(),
-                iface: "eth0".to_string(),
-            },
-            RouteEntry {
-                destination: "127.0.0.0".to_string(),
-                gateway: "0.0.0.0".to_string(),
-                genmask: "255.0.0.0".to_string(),
-                flags: "U".to_string(),
-                iface: "lo".to_string(),
-            },
-        ]
+        Vec::new()
     }
 
     pub fn dns_lookup(&self, hostname: &str) -> Vec<DnsRecord> {
-        // Simulate DNS lookups for common domains
-        let base = hostname.trim_end_matches('.');
-        match base {
-            "localhost" => vec![DnsRecord {
-                name: "localhost".to_string(),
-                record_type: "A".to_string(),
-                value: "127.0.0.1".to_string(),
-                ttl: 3600,
-            }],
-            "google.com" | "www.google.com" => vec![
-                DnsRecord {
-                    name: base.to_string(),
-                    record_type: "A".to_string(),
-                    value: "142.250.80.46".to_string(),
-                    ttl: 300,
-                },
-                DnsRecord {
-                    name: base.to_string(),
-                    record_type: "AAAA".to_string(),
-                    value: "2607:f8b0:4004:800::200e".to_string(),
-                    ttl: 300,
-                },
-            ],
-            "github.com" | "www.github.com" => vec![DnsRecord {
-                name: base.to_string(),
-                record_type: "A".to_string(),
-                value: "140.82.114.4".to_string(),
-                ttl: 60,
-            }],
-            "cloudflare.com" | "www.cloudflare.com" => vec![
-                DnsRecord {
-                    name: base.to_string(),
-                    record_type: "A".to_string(),
-                    value: "104.16.132.229".to_string(),
-                    ttl: 300,
-                },
-                DnsRecord {
-                    name: base.to_string(),
-                    record_type: "A".to_string(),
-                    value: "104.16.133.229".to_string(),
-                    ttl: 300,
-                },
-            ],
-            _ => {
-                // Generate a pseudo-random IP based on hostname hash
-                let hash: u32 = hostname
-                    .bytes()
-                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
-                let ip = format!(
-                    "{}.{}.{}.{}",
-                    (hash >> 24) & 0xFF,
-                    (hash >> 16) & 0xFF,
-                    (hash >> 8) & 0xFF,
-                    hash & 0xFF
-                );
-                vec![DnsRecord {
-                    name: base.to_string(),
-                    record_type: "A".to_string(),
-                    value: ip,
-                    ttl: 300,
-                }]
-            }
-        }
+        let _ = hostname;
+        Vec::new()
     }
 
-    pub fn ping_host(&self, _host: &str, seq: u32) -> (f64, u8) {
-        // Simulate ping with pseudo-random latency
-        let base_latency = 10.0 + (seq as f64 * 0.1) % 5.0;
-        let jitter = ((seq * 7) % 10) as f64 * 0.5;
-        (base_latency + jitter, 64) // (time_ms, ttl)
+    pub fn ping_host(&self, host: &str, _seq: u32) -> (f64, u8) {
+        let _ = host;
+        (0.0, 0)
     }
 
     pub fn traceroute_hops(&self, host: &str) -> Vec<(u8, String, f64)> {
-        // Simulate traceroute with plausible hops
-        let records = self.dns_lookup(host);
-        let dest_ip = records
-            .first()
-            .map(|r| r.value.clone())
-            .unwrap_or_else(|| "0.0.0.0".to_string());
-
-        vec![
-            (1, "192.168.1.1".to_string(), 1.2),
-            (2, "10.0.0.1".to_string(), 5.4),
-            (3, "72.14.215.85".to_string(), 12.3),
-            (4, "108.170.252.129".to_string(), 18.7),
-            (5, "142.251.49.24".to_string(), 22.1),
-            (6, dest_ip, 25.5),
-        ]
+        let _ = host;
+        Vec::new()
     }
 
     pub fn arp_table(&self) -> Vec<(String, String, String)> {
-        vec![
-            (
-                "192.168.1.1".to_string(),
-                "00:1a:2b:3c:4d:5e".to_string(),
-                "eth0".to_string(),
-            ),
-            (
-                "192.168.1.100".to_string(),
-                "02:42:ac:11:00:02".to_string(),
-                "eth0".to_string(),
-            ),
-        ]
+        Vec::new()
     }
 
     pub async fn http_get(url: &str) -> Result<String, String> {
@@ -543,14 +400,11 @@ pub async fn ping_request(url: &str) -> Result<String, JsValue> {
 
     match JsFuture::from(window.fetch_with_request(&request)).await {
         Ok(_) => {
-            // With no-cors we get an opaque response but timing is still valid
+            // With no-cors we get an opaque response but timing is still valid.
             let elapsed = js_sys::Date::now() - start;
             Ok(format!("time={:.1}ms", elapsed))
         }
-        Err(_) => {
-            let elapsed = js_sys::Date::now() - start;
-            Ok(format!("time={:.1}ms status=timeout", elapsed))
-        }
+        Err(_) => Err(JsValue::from_str("timeout")),
     }
 }
 

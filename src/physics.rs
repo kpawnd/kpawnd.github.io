@@ -890,32 +890,18 @@ pub fn circle_wall_collision(
     wall_x: i32,
     wall_y: i32,
 ) -> bool {
-    let wall_min = Vec2::new(wall_x as f64, wall_y as f64);
-    let wall_max = Vec2::new(wall_x as f64 + 1.0, wall_y as f64 + 1.0);
-
-    // Find closest point on wall to circle
-    let closest_x = pos.x.max(wall_min.x).min(wall_max.x);
-    let closest_y = pos.y.max(wall_min.y).min(wall_max.y);
-    let closest = Vec2::new(closest_x, closest_y);
-
-    let dist_sq = pos.distance_squared_to(&closest);
-    if dist_sq < radius * radius && dist_sq > 0.0001 {
-        let dist = dist_sq.sqrt();
-        let normal = pos.sub(&closest).scale(1.0 / dist);
-        let overlap = radius - dist;
-
-        // Push out of wall
-        *pos = pos.add(&normal.scale(overlap));
-
-        // Reflect velocity
-        let vel_dot = vel.dot(&normal);
-        if vel_dot < 0.0 {
-            *vel = vel.sub(&normal.scale(2.0 * vel_dot * 0.5)); // 0.5 = friction/bounce
-        }
-
-        return true;
+    let out = crate::cpp_accel::circle_wall_collision_step(
+        pos.x, pos.y, vel.x, vel.y, radius, wall_x, wall_y,
+    );
+    if out.collided != 0 {
+        pos.x = out.pos_x;
+        pos.y = out.pos_y;
+        vel.x = out.vel_x;
+        vel.y = out.vel_y;
+        true
+    } else {
+        false
     }
-    false
 }
 
 #[cfg(test)]

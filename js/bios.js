@@ -188,7 +188,6 @@ async function detectConnectedDeviceStats() {
     ? await getGrantedCount(() => navigator.serial.getPorts())
     : null;
 
-  let mediaCount = 0;
   let gamepadCount = 0;
 
   try {
@@ -200,24 +199,11 @@ async function detectConnectedDeviceStats() {
     // Ignore unsupported gamepad API.
   }
 
-  try {
-    if (navigator.mediaDevices && typeof navigator.mediaDevices.enumerateDevices === 'function') {
-      const devices = await Promise.race([
-        navigator.mediaDevices.enumerateDevices(),
-        timeoutAfter(PROBE_TIMEOUT_MS, [])
-      ]);
-      mediaCount = Array.isArray(devices) ? devices.length : 0;
-    }
-  } catch {
-    // Ignore blocked media device enumeration.
-  }
-
   const trustedBusCount = [usbCount, hidCount, serialCount]
     .filter((v) => Number.isInteger(v) && v >= 0)
     .reduce((sum, v) => sum + v, 0);
 
-  const broadCount = mediaCount + gamepadCount;
-  return { trustedBusCount, broadCount };
+  return { trustedBusCount, gamepadCount };
 }
 
 async function buildAutoProfile(totalMemoryKb) {
@@ -228,19 +214,21 @@ async function buildAutoProfile(totalMemoryKb) {
 
   // Calibrate to old POST-era wording: prefer concrete granted-device counts,
   // blend in broad I/O signals only as a soft estimate when direct buses are absent.
-  const fallbackBaseline = Math.max(2, Math.min(10, 2 + Math.floor(signals.cores / 2) + Math.floor(signals.memoryGb / 4)));
+  const fallbackBaseline = 0;
   const estimatedUsbDevices = stats.trustedBusCount > 0
     ? stats.trustedBusCount
-    : stats.broadCount > 0
-      ? Math.max(2, Math.floor(stats.broadCount * 0.6))
+    : stats.gamepadCount > 0
+      ? stats.gamepadCount
       : fallbackBaseline;
 
   let stableDeviceEstimate = estimatedUsbDevices;
   try {
     const cachedValue = Number(window.localStorage.getItem(DEVICE_ESTIMATE_CACHE_KEY));
-    if (Number.isFinite(cachedValue) && cachedValue > 0) {
-      // Keep output stable while still adapting when a clearly higher count appears.
-      stableDeviceEstimate = Math.max(Math.floor((cachedValue + estimatedUsbDevices) / 2), estimatedUsbDevices);
+    if (estimatedUsbDevices === 0) {
+      stableDeviceEstimate = 0;
+    } else if (Number.isFinite(cachedValue) && cachedValue >= 0) {
+      // Keep output stable while adapting up or down over time.
+      stableDeviceEstimate = Math.max(0, Math.round((cachedValue * 0.65) + (estimatedUsbDevices * 0.35)));
     }
     window.localStorage.setItem(DEVICE_ESTIMATE_CACHE_KEY, String(stableDeviceEstimate));
   } catch {
@@ -297,6 +285,26 @@ function setScreenVisible(id, visible, display = 'block') {
   el.style.display = visible ? display : 'none';
 }
 
+function applyResponsiveBiosLayout(bios, pre, logo) {
+  if (!bios || !pre) return;
+
+  const vw = Math.max(320, window.innerWidth || 0);
+  const vh = Math.max(240, window.innerHeight || 0);
+
+  if (logo) {
+    const targetLogoWidth = Math.min(vw * 0.34, 620);
+    logo.style.width = `${Math.round(targetLogoWidth)}px`;
+  }
+
+  const logoBottom = logo ? (logo.getBoundingClientRect().bottom - bios.getBoundingClientRect().top) : 0;
+  const topPadding = Math.max(Math.round(vh * 0.12), Math.round(logoBottom + 18));
+  const sidePadding = Math.max(10, Math.round(vw * 0.012));
+
+  pre.style.paddingTop = `${topPadding}px`;
+  pre.style.paddingLeft = `${sidePadding}px`;
+  pre.style.paddingRight = `${sidePadding}px`;
+}
+
 export function showBiosScreen(onComplete, options = {}) {
   (async () => {
     const system = options.system;
@@ -308,6 +316,7 @@ export function showBiosScreen(onComplete, options = {}) {
 
     const bios = document.getElementById('bios');
     const pre = document.querySelector('#bios pre');
+    const logo = document.getElementById('bios-logo');
     if (!bios || !pre) {
       onComplete();
       return;
@@ -316,9 +325,15 @@ export function showBiosScreen(onComplete, options = {}) {
     setScreenVisible('terminal', false);
     setScreenVisible('grub', false);
     setScreenVisible('bios', true);
+    applyResponsiveBiosLayout(bios, pre, logo);
+    window.requestAnimationFrame(() => applyResponsiveBiosLayout(bios, pre, logo));
     pre.textContent = biosLines.join('\n');
 
+    const onResize = () => applyResponsiveBiosLayout(bios, pre, logo);
+    window.addEventListener('resize', onResize);
+
     window.setTimeout(() => {
+      window.removeEventListener('resize', onResize);
       setScreenVisible('bios', false);
       onComplete();
     }, HOLD_MS);

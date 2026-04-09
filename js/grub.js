@@ -38,8 +38,45 @@ export function showGrub() {
         updateGrubDisplay();
       } else if ((e.ctrlKey && e.key === 'x') || e.key === 'F10') {
         e.preventDefault();
+        state.grubMenu.apply_edit_changes();
         state.grubMenu.exit_special_mode();
         bootSelected();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        state.grubMenu.edit_move_up();
+        updateGrubDisplay();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        state.grubMenu.edit_move_down();
+        updateGrubDisplay();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        state.grubMenu.edit_move_left();
+        updateGrubDisplay();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        state.grubMenu.edit_move_right();
+        updateGrubDisplay();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        state.grubMenu.edit_set_cursor_home();
+        updateGrubDisplay();
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        state.grubMenu.edit_set_cursor_end();
+        updateGrubDisplay();
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        state.grubMenu.edit_backspace();
+        updateGrubDisplay();
+      } else if (e.key === 'Delete') {
+        e.preventDefault();
+        state.grubMenu.edit_delete();
+        updateGrubDisplay();
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        state.grubMenu.edit_insert_char(e.key);
+        updateGrubDisplay();
       }
       return;
     }
@@ -48,6 +85,18 @@ export function showGrub() {
       if (e.key === 'Escape') {
         e.preventDefault();
         state.grubMenu.exit_special_mode();
+        updateGrubDisplay();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        state.grubMenu.cmdline_execute();
+        updateGrubDisplay();
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        state.grubMenu.cmdline_backspace();
+        updateGrubDisplay();
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        state.grubMenu.cmdline_insert_char(e.key);
         updateGrubDisplay();
       }
       return;
@@ -118,6 +167,17 @@ function updateGrubDisplay() {
 function bootSelected() {
   const selected = state.grubMenu.get_selected();
 
+  const applyBootProfile = () => {
+    try {
+      const cmdline = state.grubMenu.get_effective_cmdline();
+      const version = state.grubMenu.get_effective_kernel_version();
+      state.system.boot_set_cmdline(cmdline);
+      state.system.boot_set_kernel_version(version);
+    } catch (e) {
+      // Profile APIs may not exist on older wasm bundles.
+    }
+  };
+
   if (state.grubMenu.is_advanced_mode()) {
     // In advanced mode
     if (selected === 0) {
@@ -132,6 +192,7 @@ function bootSelected() {
       if (selected === 3) {
         startMemtest();
       } else {
+        applyBootProfile();
         beginBoot();
       }
       return;
@@ -142,6 +203,7 @@ function bootSelected() {
       // Normal boot
       getElement('grub').style.display = 'none';
       getElement('terminal').style.display = 'flex';
+      applyBootProfile();
       beginBoot();
       return;
     } else if (selected === 1) {

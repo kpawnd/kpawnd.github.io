@@ -4,7 +4,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{window, AudioContext, Document, HtmlCanvasElement, OscillatorType};
 
 use crate::graphics::Graphics;
-use crate::physics::{circle_wall_collision, raycast_dda, Body, Vec2};
+use crate::physics::{circle_wall_collision, Body, Vec2};
 
 #[cfg(feature = "webgl")]
 use crate::graphics_gl::WebGlGraphics;
@@ -1036,6 +1036,8 @@ impl DoomGame {
         } // Z-buffer for sprite rendering
         let mut z_buffer = vec![f64::MAX; w as usize];
 
+        let map_snapshot = unsafe { WORLD_MAP };
+
         // Raycast walls (optimized)
         for x in 0..w {
             let camera_x = 2.0 * x as f64 / w as f64 - 1.0;
@@ -1044,16 +1046,18 @@ impl DoomGame {
                 self.dir.y + self.plane.y * camera_x,
             );
 
-            let result = raycast_dda(
+            let result = crate::cpp_accel::raycast_dda_map(
                 self.player_body.position.x,
                 self.player_body.position.y,
                 ray_dir.x,
                 ray_dir.y,
                 50.0,
-                |mx, my| tile(mx as f64, my as f64) > 0,
+                &map_snapshot,
+                MAP_W as i32,
+                MAP_H as i32,
             );
 
-            if !result.hit || result.distance <= 0.0 {
+            if result.hit == 0 || result.distance <= 0.0 {
                 continue;
             }
 

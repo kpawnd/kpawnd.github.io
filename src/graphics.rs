@@ -768,97 +768,142 @@ impl SnakeGame {
 // Screensaver - Matrix rain effect
 #[wasm_bindgen]
 pub struct MatrixScreensaver {
-    #[allow(dead_code)]
     width: u32,
     height: u32,
+    cell_w: u32,
+    cell_h: u32,
+    frame: u64,
     columns: Vec<MatrixColumn>,
 }
 
 struct MatrixColumn {
     x: u32,
-    y: i32,
+    head_y: f32,
     speed: f32,
-    chars: Vec<char>,
+    length: u32,
+    glyph_phase: u32,
 }
 
 #[wasm_bindgen]
 impl MatrixScreensaver {
     #[wasm_bindgen(constructor)]
     pub fn new(width: u32, height: u32) -> Self {
-        web_sys::console::log_1(&format!("MatrixScreensaver::new({}x{})", width, height).into());
-        let num_columns = width / 12;
-        let mut columns = Vec::new();
+        let cell_w = 10;
+        let cell_h = 16;
+        let num_columns = (width / cell_w).max(1);
+        let mut columns = Vec::with_capacity(num_columns as usize);
 
         for i in 0..num_columns {
-            columns.push(MatrixColumn {
-                x: i * 12,
-                y: -(js_sys::Math::random() * height as f64) as i32,
-                speed: 2.0 + js_sys::Math::random() as f32 * 3.0,
-                chars: Self::random_chars(20),
-            });
+            columns.push(Self::new_column(i, cell_w, width, height));
         }
 
-        web_sys::console::log_1(&format!("Created {} columns", num_columns).into());
-        MatrixScreensaver {
+        Self {
             width,
             height,
+            cell_w,
+            cell_h,
+            frame: 0,
             columns,
         }
     }
 
     pub fn update(&mut self) {
+        self.frame = self.frame.wrapping_add(1);
+
         for col in &mut self.columns {
-            col.y += col.speed as i32;
-            if col.y > self.height as i32 + 100 {
-                col.y = -(js_sys::Math::random() * 200.0) as i32;
-                col.speed = 2.0 + js_sys::Math::random() as f32 * 3.0;
-                col.chars = Self::random_chars(20);
+            col.head_y += col.speed;
+
+            // Rare drift creates the "digital rain" cadence seen in cmatrix.
+            if js_sys::Math::random() < 0.012 {
+                col.speed = (2.8 + js_sys::Math::random() as f32 * 9.0).min(15.0);
+            }
+            if js_sys::Math::random() < 0.008 {
+                col.length = 8 + (js_sys::Math::random() * 32.0) as u32;
+            }
+
+            let trail_px = (col.length as i32 * self.cell_h as i32) + (self.cell_h as i32 * 2);
+            if col.head_y as i32 - trail_px > self.height as i32 {
+                let x_slot = (col.x / self.cell_w) as usize;
+                *col = Self::new_column(x_slot as u32, self.cell_w, self.width, self.height);
             }
         }
     }
 
     pub fn render(&self, gfx: &mut Graphics) {
-        // Fade effect - darken existing pixels
-        let gfx_width = gfx.width();
+        // Fade effect keeps phosphor-like trails.
         let gfx_height = gfx.height();
+        crate::cpp_accel::fade_rgba_sub(&mut gfx.buffer.pixels, 10, 16, 10);
 
-        for y in 0..gfx_height {
-            for x in 0..gfx_width {
-                // Use safe get/set methods instead of direct buffer access
-                let idx = ((y * gfx.buffer.width + x) * 4) as usize;
-                if idx + 3 < gfx.buffer.pixels.len() && gfx.buffer.pixels[idx + 1] > 5 {
-                    gfx.buffer.pixels[idx + 1] -= 5;
-                }
-            }
-        }
-
-        // Draw columns (simplified text rendering using rectangles)
         for col in &self.columns {
-            for (i, &ch) in col.chars.iter().enumerate() {
-                let y = col.y + (i as i32 * 12);
-                if y < 0 || y >= gfx_height as i32 {
+            let max_steps = col.length as i32;
+            for step in 0..max_steps {
+                let y = col.head_y as i32 - (step * self.cell_h as i32);
+                if y < -(self.cell_h as i32) || y >= gfx_height as i32 {
                     continue;
                 }
-                let y_u32 = y as u32;
 
-                let brightness = if i == 0 {
+                let is_head = step == 0;
+                let intensity = if is_head {
                     255
                 } else {
-                    180u8.saturating_sub(i as u8 * 8)
+                    let falloff = (step as f32 / max_steps.max(1) as f32).min(1.0);
+                    (210.0 * (1.0 - falloff)).max(20.0) as u8
                 };
-                // Draw character representation as small blocks
-                let pattern = ch as u32 % 16;
-                for dy in 0..10 {
-                    let py = y_u32.saturating_add(dy);
-                    if py >= gfx_height {
-                        continue;
-                    }
-                    for dx in 0..8 {
-                        if (pattern & (1 << (dx % 4))) != 0 {
-                            let px = col.x.saturating_add(dx);
-                            if px < gfx_width {
-                                gfx.set_pixel(px, py, 0, brightness, 0);
-                            }
+
+                let (r, g, b) = if is_head {
+                    (215, 255, 215)
+                } else {
+                    (0, intensity, 0)
+                };
+
+                let glyph_seed = self
+                    .frame
+                    .wrapping_add((col.glyph_phase as u64).wrapping_mul(7919))
+                    .wrapping_add((step as u64).wrapping_mul(97))
+                    .wrapping_add(col.x as u64 * 17);
+
+                self.draw_glyph(gfx, col.x, y as u32, glyph_seed as u32, r, g, b);
+            }
+        }
+    }
+
+    fn new_column(slot: u32, cell_w: u32, width: u32, height: u32) -> MatrixColumn {
+        let mut x = slot.saturating_mul(cell_w);
+        if cell_w > 2 {
+            x = x.saturating_add((js_sys::Math::random() * (cell_w - 2) as f64) as u32);
+        }
+        x = x.min(width.saturating_sub(1));
+
+        MatrixColumn {
+            x,
+            head_y: -((js_sys::Math::random() * height as f64) as f32),
+            speed: 2.8 + js_sys::Math::random() as f32 * 9.0,
+            length: 8 + (js_sys::Math::random() * 28.0) as u32,
+            glyph_phase: (js_sys::Math::random() * u32::MAX as f64) as u32,
+        }
+    }
+
+    fn draw_glyph(&self, gfx: &mut Graphics, x: u32, y: u32, seed: u32, r: u8, g: u8, b: u8) {
+        // Synthetic 5x7 glyphs with slight variance approximate cmatrix character shimmer.
+        let scale_x = (self.cell_w / 5).max(1);
+        let scale_y = (self.cell_h / 8).max(1);
+        let glyph = Self::glyph_from_seed(seed);
+
+        for row in 0..7u32 {
+            let bits = glyph[row as usize];
+            for col in 0..5u32 {
+                if (bits >> (4 - col)) & 1 == 0 {
+                    continue;
+                }
+
+                let px = x.saturating_add(col * scale_x);
+                let py = y.saturating_add(row * scale_y);
+                for dy in 0..scale_y {
+                    for dx in 0..scale_x {
+                        let tx = px.saturating_add(dx);
+                        let ty = py.saturating_add(dy);
+                        if tx < gfx.width() && ty < gfx.height() {
+                            gfx.set_pixel(tx, ty, r, g, b);
                         }
                     }
                 }
@@ -866,13 +911,20 @@ impl MatrixScreensaver {
         }
     }
 
-    fn random_chars(count: usize) -> Vec<char> {
-        let chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ日本語ﾊﾝｶｸｶﾅ";
-        (0..count)
-            .map(|_| {
-                let idx = (js_sys::Math::random() * chars.len() as f64) as usize;
-                chars.chars().nth(idx).unwrap_or('0')
-            })
-            .collect()
+    fn glyph_from_seed(seed: u32) -> [u8; 7] {
+        let mut s = seed ^ 0x9e37_79b9;
+        let mut rows = [0u8; 7];
+        for row in &mut rows {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let mut bits = (s & 0x1f) as u8;
+            // Ensure at least 2 pixels are lit so glyphs stay legible.
+            if bits.count_ones() < 2 {
+                bits |= 0b10001;
+            }
+            *row = bits;
+        }
+        rows
     }
 }

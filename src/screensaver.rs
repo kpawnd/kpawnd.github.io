@@ -105,8 +105,8 @@ pub fn start_screensaver() {
 
     GFX.with(|gfx| {
         let w = window().unwrap();
-        let width = (w.inner_width().unwrap().as_f64().unwrap() * 0.95) as u32;
-        let height = (w.inner_height().unwrap().as_f64().unwrap() * 0.90) as u32;
+        let width = w.inner_width().unwrap().as_f64().unwrap() as u32;
+        let height = w.inner_height().unwrap().as_f64().unwrap() as u32;
         let _canvas = ensure_canvas(width, height).unwrap();
         let g = Graphics::new("game-canvas", width, height).unwrap();
 

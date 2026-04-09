@@ -4,10 +4,15 @@ import socketserver
 import json
 import subprocess
 import shutil
+import argparse
+import errno
+import os
+import sys
 from pathlib import Path
 from datetime import datetime
 
 PORT = 8000
+HOST = '127.0.0.1'
 ROOT = Path(__file__).resolve().parent
 PKG_JS = ROOT / 'pkg' / 'terminal_os.js'
 
@@ -136,11 +141,53 @@ def ensure_wasm_bundle():
     log('INFO', 'Wasm bundle generated at pkg/terminal_os.js')
     return True
 
+
+def build_server(bind_host, preferred_port, max_tries=20):
+    """Bind server with graceful fallback for blocked or in-use ports."""
+    for offset in range(max_tries):
+        port = preferred_port + offset
+        try:
+            server = socketserver.TCPServer((bind_host, port), WasmHandler)
+            return server, port
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EADDRINUSE):
+                raise
+            level = 'WARN' if offset < max_tries - 1 else 'ERR'
+            log(level, f'Cannot bind {bind_host}:{port} ({exc}); trying next port...')
+            continue
+    raise OSError(f'Unable to bind any port in range {preferred_port}-{preferred_port + max_tries - 1}')
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Serve terminal_os with correct WASM headers.')
+    parser.add_argument('--host', default=os.environ.get('HOST', HOST), help='Bind host (default: 127.0.0.1)')
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=int(os.environ.get('PORT', PORT)),
+        help='Preferred port (default: 8000)',
+    )
+    parser.add_argument(
+        '--max-port-tries',
+        type=int,
+        default=20,
+        help='How many sequential ports to try if the preferred port is unavailable',
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    ensure_wasm_bundle()
+    args = parse_args()
+    if args.port < 1 or args.port > 65535:
+        log('ERR', f'Invalid port: {args.port}')
+        sys.exit(2)
+
+    if not ensure_wasm_bundle():
+        sys.exit(1)
+
     socketserver.TCPServer.allow_reuse_address = True
-    log('INFO', f"Starting server on port {PORT}")
-    with socketserver.TCPServer(("", PORT), WasmHandler) as httpd:
-        print(f"Serving at http://localhost:{PORT}")
+    log('INFO', f"Starting server on {args.host}:{args.port}")
+    httpd, bound_port = build_server(args.host, args.port, max_tries=max(1, args.max_port_tries))
+    with httpd:
+        print(f"Serving at http://{args.host}:{bound_port}")
         log('INFO', "Server ready, press Ctrl+C to stop")
         httpd.serve_forever()

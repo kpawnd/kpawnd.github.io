@@ -1,9 +1,14 @@
+#[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
 use std::collections::HashMap;
 use std::fmt;
 
 pub struct PythonInterpreter {
+    #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
     globals: HashMap<String, PythonValue>,
+    #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
     output: Vec<String>,
+    #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
+    cpp_handle: u32,
 }
 
 impl Default for PythonInterpreter {
@@ -41,12 +46,26 @@ impl fmt::Display for PythonValue {
 impl PythonInterpreter {
     pub fn new() -> Self {
         PythonInterpreter {
+            #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
             globals: HashMap::new(),
+            #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
             output: Vec::new(),
+            #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
+            cpp_handle: crate::cpp_accel::python_new(),
         }
     }
 
     pub fn eval(&mut self, code: &str) -> Result<String, String> {
+        #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
+        {
+            if self.cpp_handle == 0 {
+                return Err("Python engine unavailable".to_string());
+            }
+            return crate::cpp_accel::python_eval(self.cpp_handle, code);
+        }
+
+        #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
+        {
         // Security: Block dangerous operations
         if code.contains("import")
             || code.contains("__")
@@ -87,8 +106,10 @@ impl PythonInterpreter {
         // Handle expressions
         let result = self.eval_expression(trimmed)?;
         Ok(result.to_string())
+        }
     }
 
+    #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
     fn eval_expression(&self, expr: &str) -> Result<PythonValue, String> {
         let expr = expr.trim();
 
@@ -171,6 +192,7 @@ impl PythonInterpreter {
         }
     }
 
+    #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
     fn eval_arithmetic(&self, expr: &str) -> Result<PythonValue, String> {
         // Simple arithmetic evaluation (left to right, no precedence)
         let ops = ['+', '-', '*', '/'];
@@ -250,5 +272,15 @@ impl PythonInterpreter {
         }
 
         Err("invalid expression".to_string())
+    }
+}
+
+#[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
+impl Drop for PythonInterpreter {
+    fn drop(&mut self) {
+        if self.cpp_handle != 0 {
+            crate::cpp_accel::python_free(self.cpp_handle);
+            self.cpp_handle = 0;
+        }
     }
 }

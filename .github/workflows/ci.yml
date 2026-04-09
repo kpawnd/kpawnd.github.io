@@ -51,6 +51,21 @@ jobs:
       - name: Cargo check
         run: cargo check --target wasm32-unknown-unknown
 
+      - name: Install clang for cpp-accel validation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld
+
+      - name: Verify clang wasm target support
+        run: |
+          clang++ --version
+          clang++ --print-targets | grep -E 'wasm32|WebAssembly'
+
+      - name: Cargo check (cpp-accel)
+        env:
+          CXX: clang++
+        run: cargo check --target wasm32-unknown-unknown --features cpp-accel
+
       - name: Build WASM (release)
         run: wasm-pack build --release --target web --out-dir pkg
 

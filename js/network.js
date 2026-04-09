@@ -3,6 +3,24 @@ import { print, scrollToBottom } from './dom.js';
 // These will be set by main.js after WASM init
 let fetch_http, curl_request, ping_request, dns_lookup, get_public_ip;
 
+function sanitizeTarget(raw) {
+  // Strip common shell quoting/trailing punctuation that can leak into host args.
+  return (raw || '').trim().replace(/^['"`]+|['"`]+$/g, '').replace(/[\s'"`]+$/g, '');
+}
+
+function normalizeUrl(raw, { preferHttps = true } = {}) {
+  const target = sanitizeTarget(raw);
+  if (!target) return '';
+
+  if (/^https?:\/\//i.test(target)) {
+    return target;
+  }
+
+  const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(target);
+  const scheme = preferHttps && !isIpv4 ? 'https://' : 'http://';
+  return `${scheme}${target}`;
+}
+
 export function initNetwork(wasm) {
   fetch_http = wasm.fetch_http;
   curl_request = wasm.curl_request;
@@ -12,9 +30,16 @@ export function initNetwork(wasm) {
 }
 
 export async function fetchUrl(url) {
-  print(`Fetching ${url}...`, 'info');
+  const normalized = normalizeUrl(url, { preferHttps: true });
+  if (!normalized) {
+    print('Error: missing URL', 'error');
+    scrollToBottom();
+    return;
+  }
+
+  print(`Fetching ${normalized}...`, 'info');
   try {
-    print(await fetch_http(url), 'output');
+    print(await fetch_http(normalized), 'output');
   } catch (e) {
     print(`Error: ${e.message || e}`, 'error');
   }
@@ -22,9 +47,16 @@ export async function fetchUrl(url) {
 }
 
 export async function doCurl(url, method, showHeaders) {
-  print(`* Connecting to ${url}...`, 'info');
+  const normalized = normalizeUrl(url, { preferHttps: false });
+  if (!normalized) {
+    print('curl: no URL specified', 'error');
+    scrollToBottom();
+    return;
+  }
+
+  print(`* Connecting to ${normalized}...`, 'info');
   try {
-    (await curl_request(url, method, showHeaders)).split('\n').forEach(line => print(line, 'output'));
+    (await curl_request(normalized, method, showHeaders)).split('\n').forEach(line => print(line, 'output'));
   } catch (e) {
     print(`curl: (7) Failed to connect: ${e.message || e}`, 'error');
   }
@@ -32,8 +64,16 @@ export async function doCurl(url, method, showHeaders) {
 }
 
 export async function doPing(host) {
-  let url = host.startsWith('http') ? host : `https://${host}`;
-  print(`PING ${host}`, 'info');
+  const target = sanitizeTarget(host);
+  const url = normalizeUrl(target, { preferHttps: true });
+
+  if (!target || !url) {
+    print('ping: missing host operand', 'error');
+    scrollToBottom();
+    return;
+  }
+
+  print(`PING ${target}`, 'info');
 
   const results = [];
   for (let i = 0; i < 4; i++) {
@@ -48,24 +88,34 @@ export async function doPing(host) {
     await new Promise(r => setTimeout(r, 200));
   }
 
+  print(`\n--- ${target} ping statistics ---`, 'info');
+  print(`4 packets transmitted, ${results.length} received, ${((4 - results.length) / 4 * 100).toFixed(0)}% packet loss`, 'output');
+
   if (results.length) {
     const min = Math.min(...results).toFixed(1);
     const max = Math.max(...results).toFixed(1);
     const avg = (results.reduce((a, b) => a + b, 0) / results.length).toFixed(1);
-    print(`\n--- ${host} ping statistics ---`, 'info');
-    print(`4 packets transmitted, ${results.length} received, ${((4 - results.length) / 4 * 100).toFixed(0)}% packet loss`, 'output');
     print(`rtt min/avg/max = ${min}/${avg}/${max} ms`, 'output');
+  } else {
+    print('rtt min/avg/max = 0.0/0.0/0.0 ms', 'output');
   }
   scrollToBottom();
 }
 
 export async function doDns(host) {
-  print(`; <<>> DiG 9.18.0 <<>> ${host}`, 'info');
+  const target = sanitizeTarget(host);
+  if (!target) {
+    print('DNS lookup failed: missing hostname', 'error');
+    scrollToBottom();
+    return;
+  }
+
+  print(`; <<>> DiG 9.18.0 <<>> ${target}`, 'info');
   print(`;; Using DNS-over-HTTPS (Cloudflare)`, 'info');
   print('', 'output');
   try {
     print(`;; ANSWER SECTION:`, 'info');
-    (await dns_lookup(host)).split('\n').filter(Boolean).forEach(line => print(line, 'output'));
+    (await dns_lookup(target)).split('\n').filter(Boolean).forEach(line => print(line, 'output'));
   } catch (e) {
     print(`DNS lookup failed: ${e.message || e}`, 'error');
   }

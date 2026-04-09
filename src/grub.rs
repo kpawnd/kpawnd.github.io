@@ -11,8 +11,15 @@ pub struct GrubMenu {
     edit_mode: bool,
     cmdline_mode: bool,
     cmdline_buffer: String,
+    cmdline_output: Vec<String>,
     edit_buffer: Vec<String>,
+    edit_cursor_row: usize,
+    edit_cursor_col: usize,
     advanced_mode: bool,
+    normal_cmdline: String,
+    recovery_cmdline: String,
+    normal_kernel_version: String,
+    recovery_kernel_version: String,
 }
 
 impl Default for GrubMenu {
@@ -36,8 +43,15 @@ impl GrubMenu {
             edit_mode: false,
             cmdline_mode: false,
             cmdline_buffer: String::new(),
+            cmdline_output: Vec::new(),
             edit_buffer: Vec::new(),
+            edit_cursor_row: 0,
+            edit_cursor_col: 0,
             advanced_mode: false,
+            normal_cmdline: "root=/dev/sda1 ro quiet splash".to_string(),
+            recovery_cmdline: "root=/dev/sda1 ro single systemd.unit=rescue.target".to_string(),
+            normal_kernel_version: "6.7.0-kpawnd".to_string(),
+            recovery_kernel_version: "6.7.0-kpawnd-recovery".to_string(),
         }
     }
 
@@ -114,9 +128,30 @@ impl GrubMenu {
             " ┌────────────────────────────────────────────────────────────────────────────┐\n",
         );
 
-        for line in &self.edit_buffer {
-            let display = if line.len() > 76 { &line[..76] } else { line };
-            output.push_str(&format!(" │{:<77}│\n", display));
+        for (idx, line) in self.edit_buffer.iter().enumerate() {
+            let mut rendered_line = if line.len() > 76 {
+                line.chars().take(76).collect::<String>()
+            } else {
+                line.clone()
+            };
+
+            if idx == self.edit_cursor_row {
+                let chars: Vec<char> = rendered_line.chars().collect();
+                let col = self.edit_cursor_col.min(chars.len());
+                let before: String = chars[..col].iter().collect();
+                let cursor_char = chars.get(col).copied().unwrap_or(' ');
+                let after: String = if col < chars.len() {
+                    chars[col + 1..].iter().collect()
+                } else {
+                    String::new()
+                };
+                rendered_line = format!(
+                    "{}\x1b[HIGHLIGHT]{}\x1b[NORMAL]{}",
+                    before, cursor_char, after
+                );
+            }
+
+            output.push_str(&format!(" │{:<77}│\n", rendered_line));
         }
 
         // Fill remaining
@@ -132,7 +167,7 @@ impl GrubMenu {
         output.push('\n');
         output.push_str("      Minimum Emacs-like screen editing is supported. TAB lists\n");
         output.push_str("      completions. Press Ctrl-x or F10 to boot, Ctrl-c or F2 for\n");
-        output.push_str("      a command line, or ESC to discard edits and return to the menu.\n");
+        output.push_str("      a command line, or ESC to discard edits and return to menu.\n");
 
         output
     }
@@ -150,6 +185,10 @@ impl GrubMenu {
             .push_str("   lists possible command completions. Anywhere else TAB lists possible\n");
         output.push_str("   device or file completions. Press ESC to return to the menu.\n");
         output.push('\n');
+        for line in &self.cmdline_output {
+            output.push_str(line);
+            output.push('\n');
+        }
         output.push_str(&format!("grub> {}\n", self.cmdline_buffer));
         output.push('\n');
 
@@ -160,18 +199,25 @@ impl GrubMenu {
     pub fn enter_edit_mode(&mut self) {
         self.edit_mode = true;
         self.timer = 0;
+        let (title, kernel_version, cmdline) = self.effective_boot_profile();
         self.edit_buffer = vec![
-            "setparams 'kpawnd GNU/Linux'".to_string(),
+            format!("setparams '{}'", title),
             "".to_string(),
             "    insmod gzio".to_string(),
             "    insmod part_gpt".to_string(),
             "    insmod ext2".to_string(),
             "    search --no-floppy --fs-uuid --set=root wasm-uuid".to_string(),
-            "    echo    'Loading Linux 6.1.0-kpawnd ...'".to_string(),
-            "    linux   /boot/vmlinuz-6.1.0-kpawnd root=/dev/wasm0 ro quiet".to_string(),
+            format!("    echo    'Loading Linux {} ...'", kernel_version),
+            format!("    linux   /boot/vmlinuz-{} {}", kernel_version, cmdline),
             "    echo    'Loading initial ramdisk ...'".to_string(),
-            "    initrd  /boot/initrd.img-6.1.0-kpawnd".to_string(),
+            format!("    initrd  /boot/initrd.img-{}", kernel_version),
         ];
+        self.edit_cursor_row = 7;
+        self.edit_cursor_col = self
+            .edit_buffer
+            .get(self.edit_cursor_row)
+            .map(|line| line.chars().count())
+            .unwrap_or(0);
     }
 
     #[wasm_bindgen]
@@ -179,6 +225,7 @@ impl GrubMenu {
         self.cmdline_mode = true;
         self.timer = 0;
         self.cmdline_buffer = String::new();
+        self.cmdline_output.clear();
     }
 
     #[wasm_bindgen]
@@ -242,8 +289,8 @@ impl GrubMenu {
         self.timer = DEFAULT_TIMEOUT_SECS;
         self.entries = vec![
             "Back to main menu".to_string(),
-            "kpawnd GNU/Linux, with Linux 6.1.0-kpawnd".to_string(),
-            "kpawnd GNU/Linux, with Linux 6.1.0-kpawnd (recovery mode)".to_string(),
+            "kpawnd GNU/Linux, with Linux 6.7.0-kpawnd".to_string(),
+            "kpawnd GNU/Linux, with Linux 6.7.0-kpawnd-recovery (recovery mode)".to_string(),
             "Memory test (memtest86+)".to_string(),
         ];
     }
@@ -263,6 +310,312 @@ impl GrubMenu {
     #[wasm_bindgen]
     pub fn is_advanced_mode(&self) -> bool {
         self.advanced_mode
+    }
+
+    #[wasm_bindgen]
+    pub fn get_effective_cmdline(&self) -> String {
+        let (_, _, cmdline) = self.effective_boot_profile();
+        cmdline
+    }
+
+    #[wasm_bindgen]
+    pub fn get_effective_kernel_version(&self) -> String {
+        let (_, kernel_version, _) = self.effective_boot_profile();
+        kernel_version
+    }
+
+    #[wasm_bindgen]
+    pub fn get_edit_cmdline(&self) -> String {
+        self.get_effective_cmdline()
+    }
+
+    #[wasm_bindgen]
+    pub fn set_edit_cmdline(&mut self, cmdline: &str) {
+        let clean = cmdline.trim();
+        if clean.is_empty() {
+            return;
+        }
+
+        let is_recovery = self.is_recovery_selection();
+        if is_recovery {
+            self.recovery_cmdline = clean.to_string();
+        } else {
+            self.normal_cmdline = clean.to_string();
+        }
+
+        if self.edit_mode {
+            self.enter_edit_mode();
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_move_up(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        if self.edit_cursor_row > 0 {
+            self.edit_cursor_row -= 1;
+            let line_len = self
+                .edit_buffer
+                .get(self.edit_cursor_row)
+                .map(|line| line.chars().count())
+                .unwrap_or(0);
+            self.edit_cursor_col = self.edit_cursor_col.min(line_len);
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_move_down(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        if self.edit_cursor_row + 1 < self.edit_buffer.len() {
+            self.edit_cursor_row += 1;
+            let line_len = self
+                .edit_buffer
+                .get(self.edit_cursor_row)
+                .map(|line| line.chars().count())
+                .unwrap_or(0);
+            self.edit_cursor_col = self.edit_cursor_col.min(line_len);
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_move_left(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        if self.edit_cursor_col > 0 {
+            self.edit_cursor_col -= 1;
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_move_right(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        let line_len = self
+            .edit_buffer
+            .get(self.edit_cursor_row)
+            .map(|line| line.chars().count())
+            .unwrap_or(0);
+        if self.edit_cursor_col < line_len {
+            self.edit_cursor_col += 1;
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_backspace(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        if let Some(line) = self.edit_buffer.get_mut(self.edit_cursor_row) {
+            let mut chars: Vec<char> = line.chars().collect();
+            if self.edit_cursor_col > 0 && self.edit_cursor_col <= chars.len() {
+                chars.remove(self.edit_cursor_col - 1);
+                self.edit_cursor_col -= 1;
+                *line = chars.into_iter().collect();
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_delete(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        if let Some(line) = self.edit_buffer.get_mut(self.edit_cursor_row) {
+            let mut chars: Vec<char> = line.chars().collect();
+            if self.edit_cursor_col < chars.len() {
+                chars.remove(self.edit_cursor_col);
+                *line = chars.into_iter().collect();
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_insert_char(&mut self, s: &str) {
+        if !self.edit_mode {
+            return;
+        }
+        let c = match s.chars().next() {
+            Some(ch) => ch,
+            None => return,
+        };
+        if let Some(line) = self.edit_buffer.get_mut(self.edit_cursor_row) {
+            let mut chars: Vec<char> = line.chars().collect();
+            let col = self.edit_cursor_col.min(chars.len());
+            chars.insert(col, c);
+            self.edit_cursor_col = col + 1;
+            *line = chars.into_iter().collect();
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_set_cursor_home(&mut self) {
+        if self.edit_mode {
+            self.edit_cursor_col = 0;
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn edit_set_cursor_end(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        self.edit_cursor_col = self
+            .edit_buffer
+            .get(self.edit_cursor_row)
+            .map(|line| line.chars().count())
+            .unwrap_or(0);
+    }
+
+    #[wasm_bindgen]
+    pub fn apply_edit_changes(&mut self) {
+        if !self.edit_mode {
+            return;
+        }
+        if let Some(linux_line) = self
+            .edit_buffer
+            .iter()
+            .find(|line| line.trim_start().starts_with("linux"))
+        {
+            let tokens: Vec<&str> = linux_line.split_whitespace().collect();
+            if tokens.len() >= 3 {
+                let image = tokens[1];
+                if let Some(version) = image.rsplit('/').next().and_then(|f| f.strip_prefix("vmlinuz-")) {
+                    if self.is_recovery_selection() {
+                        self.recovery_kernel_version = version.to_string();
+                    } else {
+                        self.normal_kernel_version = version.to_string();
+                    }
+                }
+
+                let cmdline = tokens[2..].join(" ");
+                if !cmdline.trim().is_empty() {
+                    if self.is_recovery_selection() {
+                        self.recovery_cmdline = cmdline;
+                    } else {
+                        self.normal_cmdline = cmdline;
+                    }
+                }
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn cmdline_insert_char(&mut self, s: &str) {
+        if !self.cmdline_mode {
+            return;
+        }
+        if let Some(ch) = s.chars().next() {
+            self.cmdline_buffer.push(ch);
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn cmdline_backspace(&mut self) {
+        if self.cmdline_mode {
+            self.cmdline_buffer.pop();
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn cmdline_execute(&mut self) {
+        if !self.cmdline_mode {
+            return;
+        }
+        let cmd = self.cmdline_buffer.trim().to_string();
+        if cmd.is_empty() {
+            self.cmdline_output.push("grub>".to_string());
+            self.cmdline_buffer.clear();
+            return;
+        }
+
+        self.cmdline_output.push(format!("grub> {}", cmd));
+        match cmd.as_str() {
+            "help" => self
+                .cmdline_output
+                .push("Available commands: help, set, ls, linux, initrd, normal, boot".to_string()),
+            "set" => {
+                let (_, version, cmdline) = self.effective_boot_profile();
+                self.cmdline_output.push(format!("kernel={}", version));
+                self.cmdline_output.push(format!("linux_cmdline={}", cmdline));
+            }
+            "ls" => self
+                .cmdline_output
+                .push("(hd0) (hd0,gpt1) (hd0,gpt2)".to_string()),
+            "normal" => {
+                self.exit_special_mode();
+                return;
+            }
+            "boot" => {
+                self.exit_special_mode();
+                self.timer = 0;
+                return;
+            }
+            _ => {
+                if cmd.starts_with("linux ") {
+                    let parts: Vec<&str> = cmd.split_whitespace().collect();
+                    if parts.len() >= 3 {
+                        let image = parts[1];
+                        if let Some(version) = image
+                            .rsplit('/')
+                            .next()
+                            .and_then(|f| f.strip_prefix("vmlinuz-"))
+                        {
+                            if self.is_recovery_selection() {
+                                self.recovery_kernel_version = version.to_string();
+                                self.recovery_cmdline = parts[2..].join(" ");
+                            } else {
+                                self.normal_kernel_version = version.to_string();
+                                self.normal_cmdline = parts[2..].join(" ");
+                            }
+                            self.cmdline_output.push("linux parameters updated".to_string());
+                        } else {
+                            self.cmdline_output.push("error: invalid linux image path".to_string());
+                        }
+                    } else {
+                        self.cmdline_output
+                            .push("usage: linux /boot/vmlinuz-<version> <cmdline>".to_string());
+                    }
+                } else if cmd.starts_with("initrd ") {
+                    self.cmdline_output
+                        .push("initrd accepted".to_string());
+                } else {
+                    self.cmdline_output
+                        .push(format!("error: unknown command '{}'", cmd));
+                }
+            }
+        }
+        self.cmdline_buffer.clear();
+        if self.cmdline_output.len() > 18 {
+            let drain_len = self.cmdline_output.len() - 18;
+            self.cmdline_output.drain(0..drain_len);
+        }
+    }
+}
+
+impl GrubMenu {
+    fn is_recovery_selection(&self) -> bool {
+        self.advanced_mode && self.selected == 2
+    }
+
+    fn effective_boot_profile(&self) -> (String, String, String) {
+        if self.is_recovery_selection() {
+            (
+                "kpawnd GNU/Linux (recovery mode)".to_string(),
+                self.recovery_kernel_version.clone(),
+                self.recovery_cmdline.clone(),
+            )
+        } else {
+            (
+                "kpawnd GNU/Linux".to_string(),
+                self.normal_kernel_version.clone(),
+                self.normal_cmdline.clone(),
+            )
+        }
     }
 }
 

@@ -1,9 +1,13 @@
 import { state } from './state.js';
-import { escapeHtml, scrollToBottom, getElement } from './dom.js';
+import { escapeHtml, scrollToBottom, getElement, renderColorTokens } from './dom.js';
 import { saveUserFiles } from './storage.js';
 
 // NanoEditor class from WASM - set by main.js
 let NanoEditor;
+const VISIBLE_LINES = 20;
+let nanoPrompt = null;
+let nanoStatus = '';
+let nanoStatusTimer = null;
 
 export function initNano(wasm) {
   NanoEditor = wasm.NanoEditor;
@@ -28,9 +32,8 @@ export function renderNano() {
   const cursorCol = state.nanoEditor.get_cursor_col();
   const lineCount = state.nanoEditor.line_count();
   const isModified = state.nanoEditor.is_modified();
-  const visibleLines = 20;
-  const startLine = state.nanoEditor.calculate_viewport_start(visibleLines);
-  const endLine = Math.min(lineCount, startLine + visibleLines);
+  const startLine = state.nanoEditor.calculate_viewport_start(VISIBLE_LINES);
+  const endLine = Math.min(lineCount, startLine + VISIBLE_LINES);
 
   // Header
   const header = document.createElement('div');
@@ -56,7 +59,7 @@ export function renderNano() {
   }
 
   // Padding
-  for (let i = endLine - startLine; i < visibleLines; i++) {
+  for (let i = endLine - startLine; i < VISIBLE_LINES; i++) {
     const line = document.createElement('div');
     line.className = 'line';
     output.appendChild(line);
@@ -66,8 +69,16 @@ export function renderNano() {
   const status = document.createElement('div');
   status.className = 'line';
   status.style.color = '#888';
-  status.textContent = `[ line ${cursorRow + 1}/${lineCount}, col ${cursorCol + 1} ]`;
+  status.textContent = nanoStatus || `[ line ${cursorRow + 1}/${lineCount}, col ${cursorCol + 1} ]`;
   output.appendChild(status);
+
+  if (nanoPrompt) {
+    const prompt = document.createElement('div');
+    prompt.className = 'line nano-prompt';
+    Object.assign(prompt.style, { backgroundColor: '#222', color: '#fff' });
+    prompt.textContent = `${nanoPrompt.label}${nanoPrompt.input}`;
+    output.appendChild(prompt);
+  }
 
   // Help bars
   const helpBar = (content) => {
@@ -85,7 +96,31 @@ export function renderNano() {
 function handleNanoKey(e) {
   if (!state.nanoEditor) return;
 
-  const ctrlKeys = { x: exitNano, o: saveNanoFile, k: () => state.nanoEditor.cut_line(), u: () => state.nanoEditor.paste(), g: () => {} };
+  if (nanoPrompt) {
+    handleNanoPromptKey(e);
+    return;
+  }
+
+  const ctrlKeys = {
+    x: requestExitNano,
+    o: () => saveNanoFile(),
+    s: () => saveNanoFile(),
+    k: () => state.nanoEditor.cut_line(),
+    u: () => state.nanoEditor.paste(),
+    g: showNanoHelp,
+    c: showCursorLocation,
+    w: () => openNanoPrompt('search', 'Search: '),
+    r: () => openNanoPrompt('read', 'Read file: '),
+    t: () => openNanoPrompt('exec', 'Execute command: '),
+    '\\': () => openNanoPrompt('replace_find', 'Replace: ')
+  };
+
+  if (e.ctrlKey && (e.key === '_' || e.key === '-' || e.key === '7')) {
+    e.preventDefault();
+    openNanoPrompt('goto', 'Goto line: ');
+    renderNano();
+    return;
+  }
   if (e.ctrlKey && ctrlKeys[e.key]) {
     e.preventDefault();
     ctrlKeys[e.key]();
@@ -121,42 +156,241 @@ function handleNanoKey(e) {
   }
 }
 
-function saveNanoFile() {
+function openNanoPrompt(kind, label) {
+  nanoPrompt = { kind, label, input: '', data: {} };
+  renderNano();
+}
+
+function clearNanoPrompt() {
+  nanoPrompt = null;
+}
+
+function setNanoStatus(message, ttl = 2000) {
+  nanoStatus = message;
+  if (nanoStatusTimer) window.clearTimeout(nanoStatusTimer);
+  nanoStatusTimer = window.setTimeout(() => {
+    nanoStatus = '';
+    if (state.nanoEditor) renderNano();
+  }, ttl);
+}
+
+function cleanCommandOutput(result) {
+  return (result || '')
+    .replace(/\x1b\[COLOR:[^\]]*\]/g, '')
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(/\x1b\[[A-Z_]+[^\]]*\]/g, '');
+}
+
+function quotePath(path) {
+  if (!path) return '';
+  return /\s/.test(path) ? `"${path.replace(/"/g, '\\"')}"` : path;
+}
+
+function handleNanoPromptKey(e) {
+  e.preventDefault();
+
+  if (e.key === 'Escape' || (e.ctrlKey && (e.key === 'c' || e.key === 'C'))) {
+    clearNanoPrompt();
+    setNanoStatus('Cancelled');
+    renderNano();
+    return;
+  }
+
+  if (e.key === 'Backspace') {
+    nanoPrompt.input = nanoPrompt.input.slice(0, -1);
+    renderNano();
+    return;
+  }
+
+  if (e.key === 'Enter') {
+    submitNanoPrompt();
+    return;
+  }
+
+  if (e.key.length === 1 && !e.altKey && !e.metaKey && !e.ctrlKey) {
+    nanoPrompt.input += e.key;
+    renderNano();
+  }
+}
+
+function submitNanoPrompt() {
+  const value = nanoPrompt.input.trim();
+
+  if (nanoPrompt.kind === 'search') {
+    clearNanoPrompt();
+    if (!value) {
+      setNanoStatus('Search text required', 1600);
+    } else if (state.nanoEditor.find_goto(value)) {
+      setNanoStatus(`Found: ${value}`, 1400);
+    } else {
+      setNanoStatus(`Not found: ${value}`, 2000);
+    }
+    renderNano();
+    return;
+  }
+
+  if (nanoPrompt.kind === 'goto') {
+    clearNanoPrompt();
+    const lineNum = parseInt(value, 10);
+    if (Number.isFinite(lineNum) && lineNum > 0) {
+      state.nanoEditor.goto_line(lineNum);
+      setNanoStatus(`Moved to line ${lineNum}`, 1500);
+    } else {
+      setNanoStatus('Invalid line number', 1800);
+    }
+    renderNano();
+    return;
+  }
+
+  if (nanoPrompt.kind === 'replace_find') {
+    if (!value) {
+      clearNanoPrompt();
+      setNanoStatus('Replace text required', 1600);
+      renderNano();
+      return;
+    }
+    nanoPrompt = { kind: 'replace_with', label: 'Replace with: ', input: '', data: { needle: value } };
+    renderNano();
+    return;
+  }
+
+  if (nanoPrompt.kind === 'replace_with') {
+    nanoPrompt = {
+      kind: 'replace_scope',
+      label: 'Replace all? (y/n): ',
+      input: '',
+      data: { needle: nanoPrompt.data.needle, replacement: value }
+    };
+    renderNano();
+    return;
+  }
+
+  if (nanoPrompt.kind === 'replace_scope') {
+    const yes = /^y(es)?$/i.test(value);
+    const { needle, replacement } = nanoPrompt.data;
+    clearNanoPrompt();
+    if (yes) {
+      const count = state.nanoEditor.replace_all(needle, replacement);
+      setNanoStatus(`Replaced ${count} occurrence(s)`, 1800);
+    } else {
+      const changed = state.nanoEditor.replace(needle, replacement);
+      setNanoStatus(changed ? 'Replaced 1 occurrence' : 'No match at cursor line', 1800);
+    }
+    renderNano();
+    return;
+  }
+
+  if (nanoPrompt.kind === 'read') {
+    clearNanoPrompt();
+    if (!value) {
+      setNanoStatus('File path required', 1600);
+      renderNano();
+      return;
+    }
+    const cmd = `cat ${quotePath(value)}`;
+    const raw = state.system.exec(cmd);
+    const out = cleanCommandOutput(raw);
+    if (!out || /^cat: /.test(out)) {
+      setNanoStatus(out || 'Unable to read file', 2200);
+    } else {
+      state.nanoEditor.insert_string(out);
+      setNanoStatus(`Inserted file: ${value}`, 1700);
+    }
+    renderNano();
+    return;
+  }
+
+  if (nanoPrompt.kind === 'exec') {
+    clearNanoPrompt();
+    if (!value) {
+      setNanoStatus('Command required', 1600);
+      renderNano();
+      return;
+    }
+    const raw = state.system.exec(value);
+    const out = cleanCommandOutput(raw).trim();
+    if (out) {
+      state.nanoEditor.insert_string(out);
+      setNanoStatus('Command output inserted', 1800);
+    } else {
+      setNanoStatus('Command executed (no output)', 1500);
+    }
+    renderNano();
+    return;
+  }
+
+  if (nanoPrompt.kind === 'exit_confirm') {
+    clearNanoPrompt();
+    if (/^y(es)?$/i.test(value)) {
+      saveNanoFile(exitNano);
+    } else if (/^n(o)?$/i.test(value)) {
+      exitNano();
+    } else {
+      setNanoStatus('Exit cancelled', 1500);
+      renderNano();
+    }
+  }
+}
+
+function saveNanoFile(onSuccess) {
   const content = state.nanoEditor.get_content();
   const filename = state.nanoEditor.get_filename();
   const lineCount = state.nanoEditor.line_count();
   const result = state.system.save_file(filename, content);
 
   if (result) {
-    const output = getElement('output');
-    const msg = document.createElement('div');
-    msg.className = 'line';
-    Object.assign(msg.style, { textAlign: 'center', color: '#f00' });
-    msg.textContent = result;
-    output.appendChild(msg);
+    setNanoStatus(result, 2600);
   } else {
     state.nanoEditor.mark_saved();
-    
+
     // Persist to localStorage
     saveUserFiles();
-    
-    const msg = document.createElement('div');
-    msg.className = 'line';
-    Object.assign(msg.style, { textAlign: 'center', color: '#0f0' });
-    msg.textContent = `[ Wrote ${lineCount} lines to ${filename} ]`;
-    getElement('output').appendChild(msg);
-    setTimeout(renderNano, 1500);
+
+    setNanoStatus(`[ Wrote ${lineCount} lines to ${filename} ]`, 1800);
+    if (typeof onSuccess === 'function') {
+      window.setTimeout(onSuccess, 120);
+    } else {
+      renderNano();
+    }
   }
+}
+
+function requestExitNano() {
+  if (state.nanoEditor && state.nanoEditor.is_modified()) {
+    nanoPrompt = { kind: 'exit_confirm', label: 'Save modified buffer? (y/n): ', input: '', data: {} };
+    renderNano();
+  } else {
+    exitNano();
+  }
+}
+
+function showNanoHelp() {
+  setNanoStatus('^O Save  ^X Exit  ^W Search  ^\\ Replace  ^_ Goto  ^R Read  ^T Exec  ^C Cursor', 3500);
+}
+
+function showCursorLocation() {
+  const row = state.nanoEditor.get_cursor_row() + 1;
+  const col = state.nanoEditor.get_cursor_col() + 1;
+  const total = state.nanoEditor.line_count();
+  setNanoStatus(`line ${row}/${total}, col ${col}`, 1500);
 }
 
 function exitNano() {
   document.removeEventListener('keydown', handleNanoKey);
   if (state.nanoEditor) state.nanoEditor.free();
   state.nanoEditor = null;
+  clearNanoPrompt();
+  nanoStatus = '';
+  if (nanoStatusTimer) {
+    window.clearTimeout(nanoStatusTimer);
+    nanoStatusTimer = null;
+  }
 
   getElement('output').innerHTML = '';
   getElement('prompt').style.display = '';
   getElement('input').style.display = '';
-  getElement('prompt').textContent = state.system.prompt();
+  const promptText = state.system.prompt();
+  const promptEl = getElement('prompt');
+  promptEl.innerHTML = promptText.includes('\x1b[COLOR:') ? renderColorTokens(promptText) : escapeHtml(promptText);
   getElement('input').focus();
 }
