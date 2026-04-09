@@ -35,6 +35,11 @@ pub struct CircleWallCollisionResult {
     pub vel_y: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum B64DecodeError {
+    InvalidInput,
+}
+
 #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
 unsafe extern "C" {
     fn cpp_crc32(data: *const u8, len: usize) -> u32;
@@ -143,9 +148,10 @@ pub fn raycast_dda_map(
     dir_y: f64,
     max_distance: f64,
     map_data: &[i32],
-    map_w: i32,
-    map_h: i32,
+    map_size: (i32, i32),
 ) -> DDARaycastResult {
+    let (map_w, map_h) = map_size;
+
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
         let mut out = DDARaycastResult::default();
@@ -351,7 +357,7 @@ pub fn b64_encode(data: &[u8]) -> String {
     }
 }
 
-pub fn b64_decode(text: &str) -> Result<Vec<u8>, ()> {
+pub fn b64_decode(text: &str) -> Result<Vec<u8>, B64DecodeError> {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
         let input = text.as_bytes();
@@ -360,7 +366,7 @@ pub fn b64_decode(text: &str) -> Result<Vec<u8>, ()> {
         // SAFETY: output buffer is valid for `max_len` bytes.
         let written = unsafe { cpp_b64_decode(input.as_ptr(), input.len(), out.as_mut_ptr()) };
         if written == usize::MAX {
-            return Err(());
+            return Err(B64DecodeError::InvalidInput);
         }
         out.truncate(written);
         return Ok(out);
@@ -369,7 +375,7 @@ pub fn b64_decode(text: &str) -> Result<Vec<u8>, ()> {
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
     {
         use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-        B64.decode(text).map_err(|_| ())
+        B64.decode(text).map_err(|_| B64DecodeError::InvalidInput)
     }
 }
 

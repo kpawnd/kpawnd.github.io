@@ -862,7 +862,7 @@ impl MatrixScreensaver {
                     .wrapping_add((step as u64).wrapping_mul(97))
                     .wrapping_add(col.x as u64 * 17);
 
-                self.draw_glyph(gfx, col.x, y as u32, glyph_seed as u32, r, g, b);
+                self.draw_glyph(gfx, col.x, y as u32, glyph_seed as u32, (r, g, b));
             }
         }
     }
@@ -883,11 +883,12 @@ impl MatrixScreensaver {
         }
     }
 
-    fn draw_glyph(&self, gfx: &mut Graphics, x: u32, y: u32, seed: u32, r: u8, g: u8, b: u8) {
+    fn draw_glyph(&self, gfx: &mut Graphics, x: u32, y: u32, seed: u32, color: (u8, u8, u8)) {
         // Synthetic 5x7 glyphs with slight variance approximate cmatrix character shimmer.
         let scale_x = (self.cell_w / 5).max(1);
         let scale_y = (self.cell_h / 8).max(1);
         let glyph = Self::glyph_from_seed(seed);
+        let (r, g, b) = color;
 
         for row in 0..7u32 {
             let bits = glyph[row as usize];

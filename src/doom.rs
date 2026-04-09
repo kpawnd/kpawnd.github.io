@@ -1053,8 +1053,7 @@ impl DoomGame {
                 ray_dir.y,
                 50.0,
                 &map_snapshot,
-                MAP_W as i32,
-                MAP_H as i32,
+                (MAP_W as i32, MAP_H as i32),
             );
 
             if result.hit == 0 || result.distance <= 0.0 {
