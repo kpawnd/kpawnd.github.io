@@ -4,15 +4,13 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 #[cfg(feature = "webgl")]
 use web_sys::{
-    HtmlCanvasElement, WebGl2RenderingContext, WebGlProgram, WebGlRenderingContext, WebGlShader,
-    WebGlTexture,
+    HtmlCanvasElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture,
 };
 
 #[cfg(feature = "webgl")]
 pub struct WebGlGraphics {
     canvas: HtmlCanvasElement,
     gl: WebGl2RenderingContext, // fall back manually if needed
-    program: WebGlProgram,
     texture: WebGlTexture,
     width: u32,
     height: u32,
@@ -173,7 +171,6 @@ impl WebGlGraphics {
         Ok(Self {
             canvas,
             gl: gl2,
-            program,
             texture,
             width,
             height,
@@ -214,6 +211,55 @@ impl WebGlGraphics {
 
     pub fn present(&mut self) -> Result<(), JsValue> {
         self.upload_and_draw()
+    }
+
+    #[inline]
+    pub fn set_pixel_rgb(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
+        self.set_pixel(x, y, r, g, b);
+    }
+
+    pub fn draw_hline(&mut self, x_start: u32, x_end: u32, y: u32, r: u8, g: u8, b: u8) {
+        if y >= self.height {
+            return;
+        }
+        let start = x_start.min(x_end);
+        let end = x_start.max(x_end).min(self.width.saturating_sub(1));
+        for x in start..=end {
+            self.set_pixel(x, y, r, g, b);
+        }
+    }
+
+    pub fn draw_vline(&mut self, x: u32, y_start: u32, y_end: u32, r: u8, g: u8, b: u8) {
+        if x >= self.width {
+            return;
+        }
+        let start = y_start.min(y_end);
+        let end = y_start.max(y_end).min(self.height.saturating_sub(1));
+        for y in start..=end {
+            self.set_pixel(x, y, r, g, b);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_rect(&mut self, x: u32, y: u32, w: u32, h: u32, r: u8, g: u8, b: u8) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        self.draw_hline(x, x.saturating_add(w - 1), y, r, g, b);
+        self.draw_hline(x, x.saturating_add(w - 1), y.saturating_add(h - 1), r, g, b);
+        self.draw_vline(x, y, y.saturating_add(h - 1), r, g, b);
+        self.draw_vline(x.saturating_add(w - 1), y, y.saturating_add(h - 1), r, g, b);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn fill_rect(&mut self, x: u32, y: u32, w: u32, h: u32, r: u8, g: u8, b: u8) {
+        let y_end = y.saturating_add(h);
+        let x_end = x.saturating_add(w);
+        for yy in y..y_end.min(self.height) {
+            for xx in x..x_end.min(self.width) {
+                self.set_pixel(xx, yy, r, g, b);
+            }
+        }
     }
 
     pub fn upload_and_draw(&self) -> Result<(), JsValue> {

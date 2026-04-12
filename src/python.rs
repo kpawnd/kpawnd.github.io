@@ -61,7 +61,7 @@ impl PythonInterpreter {
             if self.cpp_handle == 0 {
                 return Err("Python engine unavailable".to_string());
             }
-            return crate::cpp_accel::python_eval(self.cpp_handle, code);
+            crate::cpp_accel::python_eval(self.cpp_handle, code)
         }
 
         #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]

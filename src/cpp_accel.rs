@@ -98,7 +98,7 @@ pub fn crc32(data: &[u8]) -> u32 {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
         // SAFETY: `data` points to valid memory for `len` bytes for the duration of this call.
-        return unsafe { cpp_crc32(data.as_ptr(), data.len()) };
+        unsafe { cpp_crc32(data.as_ptr(), data.len()) }
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -111,7 +111,7 @@ pub fn adler32(data: &[u8]) -> u32 {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
         // SAFETY: `data` points to valid memory for `len` bytes for the duration of this call.
-        return unsafe { cpp_adler32(data.as_ptr(), data.len()) };
+        unsafe { cpp_adler32(data.as_ptr(), data.len()) }
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -125,7 +125,6 @@ pub fn fade_rgba_sub(pixels: &mut [u8], sub_r: u8, sub_g: u8, sub_b: u8) {
     {
         // SAFETY: `pixels` is valid mutable memory for `len` bytes.
         unsafe { cpp_fade_rgba_sub(pixels.as_mut_ptr(), pixels.len(), sub_r, sub_g, sub_b) };
-        return;
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -169,7 +168,7 @@ pub fn raycast_dda_map(
                 &mut out as *mut DDARaycastResult,
             );
         }
-        return out;
+        out
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -288,7 +287,7 @@ pub fn circle_wall_collision_step(
                 &mut out as *mut CircleWallCollisionResult,
             );
         }
-        return out;
+        out
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -347,7 +346,7 @@ pub fn b64_encode(data: &[u8]) -> String {
         // SAFETY: output buffer is preallocated with sufficient size.
         let written = unsafe { cpp_b64_encode(data.as_ptr(), data.len(), out.as_mut_ptr()) };
         out.truncate(written);
-        return String::from_utf8_lossy(&out).into_owned();
+        String::from_utf8_lossy(&out).into_owned()
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -366,10 +365,11 @@ pub fn b64_decode(text: &str) -> Result<Vec<u8>, B64DecodeError> {
         // SAFETY: output buffer is valid for `max_len` bytes.
         let written = unsafe { cpp_b64_decode(input.as_ptr(), input.len(), out.as_mut_ptr()) };
         if written == usize::MAX {
-            return Err(B64DecodeError::InvalidInput);
+            Err(B64DecodeError::InvalidInput)
+        } else {
+            out.truncate(written);
+            Ok(out)
         }
-        out.truncate(written);
-        return Ok(out);
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -382,7 +382,7 @@ pub fn b64_decode(text: &str) -> Result<Vec<u8>, B64DecodeError> {
 pub fn backend_name() -> &'static str {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
-        return "c++";
+        "c++"
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -394,7 +394,7 @@ pub fn backend_name() -> &'static str {
 pub fn python_new() -> u32 {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
-        return unsafe { cpp_python_new() };
+        unsafe { cpp_python_new() }
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]
@@ -407,7 +407,6 @@ pub fn python_free(id: u32) {
     #[cfg(all(feature = "cpp-accel", not(cpp_accel_disabled)))]
     {
         unsafe { cpp_python_free(id) };
-        return;
     }
 
     #[cfg(any(not(feature = "cpp-accel"), cpp_accel_disabled))]

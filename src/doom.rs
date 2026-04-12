@@ -3,11 +3,13 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{window, AudioContext, Document, HtmlCanvasElement, OscillatorType};
 
-use crate::graphics::Graphics;
 use crate::physics::{circle_wall_collision, Body, Vec2};
 
 #[cfg(feature = "webgl")]
 use crate::graphics_gl::WebGlGraphics;
+
+#[cfg(not(feature = "webgl"))]
+use crate::graphics::Graphics;
 
 #[cfg(not(feature = "webgl"))]
 type Renderer = Graphics;
@@ -493,14 +495,15 @@ impl DoomGame {
             let to_monster = monster.body.position.sub(&player_pos);
             let dist = to_monster.length();
 
-            if fallback_choice.map_or(true, |(_, best_dist)| dist < best_dist) {
+            if fallback_choice.is_none_or(|(_, best_dist)| dist < best_dist) {
                 fallback_choice = Some((monster.body.position, dist));
             }
 
-            if dist < 22.0 && self.has_line_of_sight(player_pos, monster.body.position) {
-                if visible_choice.map_or(true, |(_, best_dist)| dist < best_dist) {
-                    visible_choice = Some((monster.body.position, dist));
-                }
+            if dist < 22.0
+                && self.has_line_of_sight(player_pos, monster.body.position)
+                && visible_choice.is_none_or(|(_, best_dist)| dist < best_dist)
+            {
+                visible_choice = Some((monster.body.position, dist));
             }
         }
 
