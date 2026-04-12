@@ -518,15 +518,11 @@ impl DoomGame {
         }
 
         if target_pos.is_none() {
-            if let Some(pickup) = self
-                .ammo_pickups
-                .iter()
-                .min_by(|a, b| {
-                    let da = player_pos.distance_squared_to(a);
-                    let db = player_pos.distance_squared_to(b);
-                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                })
-            {
+            if let Some(pickup) = self.ammo_pickups.iter().min_by(|a, b| {
+                let da = player_pos.distance_squared_to(a);
+                let db = player_pos.distance_squared_to(b);
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            }) {
                 target_pos = Some(*pickup);
                 target_dist = player_pos.distance_to(pickup);
                 target_visible = true;
