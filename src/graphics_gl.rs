@@ -3,9 +3,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(feature = "webgl")]
 use wasm_bindgen::JsCast;
 #[cfg(feature = "webgl")]
-use web_sys::{
-    HtmlCanvasElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture,
-};
+use web_sys::{HtmlCanvasElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture};
 
 #[cfg(feature = "webgl")]
 pub struct WebGlGraphics {
