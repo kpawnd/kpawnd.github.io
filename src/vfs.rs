@@ -611,7 +611,7 @@ impl Vfs {
             user.group = "user".into();
             user.children.insert(".bashrc".into(), Inode::file(".bashrc", "# ~/.bashrc: executed by bash for non-login shells.\n\nalias ll='ls -la'\nalias la='ls -A'\n\nPS1='\\u@\\h:\\w\\$ '\n"));
             user.children.insert(".profile".into(), Inode::file(".profile", "# ~/.profile: executed by the command interpreter for login shells\n\nif [ -f ~/.bashrc ]; then\n    . ~/.bashrc\nfi\n"));
-            user.children.insert("readme.txt".into(), Inode::file("readme.txt", "This is a terminal emulator running in your browser.\nType 'echo github' to visit the project page.\n\nTry these commands:\n  htop      - Display process and resource view\n  ls /bin   - List available commands\n  nano      - Edit files\n  python    - Python REPL\n  doom      - Play a game!\n"));
+            user.children.insert("readme.txt".into(), Inode::file("readme.txt", "This is a terminal emulator running in your browser.\nType 'echo github' to visit the project page.\n\nTry these commands:\n  htop      - Display process and resource view\n  ls /bin   - List available commands\n  nano      - Edit files\n  python    - Python REPL\n  doom      - Play a game or let the AI play\n"));
 
             let mut documents = Inode::dir("Documents");
             documents.owner = "user".into();

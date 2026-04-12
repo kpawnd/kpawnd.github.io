@@ -129,6 +129,12 @@ enum Difficulty {
     Hard,   // Monsters deal 20 damage, player has 75 HP
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ControlMode {
+    Human,
+    Bot,
+}
+
 // Enhanced world map (static mut for runtime initialization)
 static mut WORLD_MAP: [i32; MAP_W * MAP_H] = [0; MAP_W * MAP_H];
 
@@ -377,10 +383,11 @@ struct DoomGame {
     ammo_pickups: Vec<Vec2>,
     last_ammo_spawn_time: f64,
     procedural: bool,
+    control_mode: ControlMode,
 }
 
 impl DoomGame {
-    fn new(difficulty: Difficulty) -> Self {
+    fn new(difficulty: Difficulty, control_mode: ControlMode) -> Self {
         init_world_map();
         init_textures();
 
@@ -445,12 +452,147 @@ impl DoomGame {
             ammo_pickups: Vec::new(),
             last_ammo_spawn_time: 0.0,
             procedural: false,
+            control_mode,
         }
     }
 
     fn enable_procedural(&mut self) {
         self.procedural = true;
         generate_procedural_world();
+    }
+
+    fn has_line_of_sight(&self, from: Vec2, to: Vec2) -> bool {
+        let delta = to.sub(&from);
+        let distance = delta.length();
+        if distance <= 0.001 {
+            return true;
+        }
+
+        let steps = (distance / 0.25).ceil().max(1.0) as i32;
+        for step in 1..steps {
+            let t = step as f64 / steps as f64;
+            let sample = from.lerp(&to, t);
+            if tile(sample.x, sample.y) > 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn build_ai_command(&self, now: f64) -> (Vec2, f64, bool, u8) {
+        let player_pos = self.player_body.position;
+        let facing = self.dir.normalize();
+        let mut visible_choice: Option<(Vec2, f64)> = None;
+        let mut fallback_choice: Option<(Vec2, f64)> = None;
+
+        for monster in &self.monsters {
+            if monster.state == MonsterState::Dead {
+                continue;
+            }
+
+            let to_monster = monster.body.position.sub(&player_pos);
+            let dist = to_monster.length();
+
+            if fallback_choice.map_or(true, |(_, best_dist)| dist < best_dist) {
+                fallback_choice = Some((monster.body.position, dist));
+            }
+
+            if dist < 22.0 && self.has_line_of_sight(player_pos, monster.body.position) {
+                if visible_choice.map_or(true, |(_, best_dist)| dist < best_dist) {
+                    visible_choice = Some((monster.body.position, dist));
+                }
+            }
+        }
+
+        let mut target_pos = None;
+        let mut target_dist = f64::MAX;
+        let mut target_visible = false;
+
+        if let Some((pos, dist)) = visible_choice {
+            target_pos = Some(pos);
+            target_dist = dist;
+            target_visible = true;
+        } else if let Some((pos, dist)) = fallback_choice {
+            target_pos = Some(pos);
+            target_dist = dist;
+        }
+
+        if target_pos.is_none() {
+            if let Some(pickup) = self
+                .ammo_pickups
+                .iter()
+                .min_by(|a, b| {
+                    let da = player_pos.distance_squared_to(a);
+                    let db = player_pos.distance_squared_to(b);
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                })
+            {
+                target_pos = Some(*pickup);
+                target_dist = player_pos.distance_to(pickup);
+                target_visible = true;
+            }
+        }
+
+        let Some(target_pos) = target_pos else {
+            return (facing.scale(8.0), 0.02, false, self.current_weapon);
+        };
+
+        let to_target = target_pos.sub(&player_pos);
+        let mut desired_angle = to_target.y.atan2(to_target.x);
+        if !desired_angle.is_finite() {
+            desired_angle = 0.0;
+        }
+        let current_angle = self.dir.y.atan2(self.dir.x);
+        let mut angle_error = desired_angle - current_angle;
+        while angle_error > PI {
+            angle_error -= 2.0 * PI;
+        }
+        while angle_error < -PI {
+            angle_error += 2.0 * PI;
+        }
+
+        let mut move_force = Vec2::zero();
+        let mut turn = angle_error.clamp(-0.7, 0.7) * 0.1;
+        let strafe_dir = if angle_error >= 0.0 {
+            facing.perpendicular()
+        } else {
+            facing.perpendicular().scale(-1.0)
+        };
+
+        if target_dist < 2.8 && target_visible {
+            move_force = move_force.sub(&facing.scale(18.0));
+            move_force = move_force.add(&strafe_dir.scale(8.0));
+        } else if target_dist < 6.0 && target_visible {
+            move_force = move_force.add(&strafe_dir.scale(10.0));
+        } else {
+            move_force = move_force.add(&facing.scale(18.0));
+        }
+
+        if !target_visible {
+            move_force = move_force.add(&facing.scale(6.0));
+            turn *= 1.25;
+        }
+
+        let ahead = player_pos.add(&facing.scale(0.75));
+        if tile(ahead.x, ahead.y) > 0 {
+            move_force = move_force.add(&strafe_dir.scale(14.0));
+            move_force = move_force.sub(&facing.scale(6.0));
+            turn += 0.05 * if angle_error >= 0.0 { 1.0 } else { -1.0 };
+        }
+
+        let preferred_weapon = if target_visible && target_dist < 8.0 && self.ammo >= 2 {
+            1
+        } else {
+            0
+        };
+
+        let should_shoot = target_visible
+            && target_dist < 18.0
+            && angle_error.abs() < 0.16
+            && now - self.last_shot_time > 220.0
+            && self.ammo > 0;
+
+        (move_force, turn, should_shoot, preferred_weapon)
     }
 
     fn update(&mut self, dt: f64) -> bool {
@@ -491,42 +633,56 @@ impl DoomGame {
             return true;
         }
 
+        let now = js_sys::Date::now();
+
         // Player movement with physics
         let move_force = 20.0; // Reduced for better control
         let mut force = Vec2::zero();
+        let mut shoot = false;
 
-        KEYS.with(|k| {
-            let keys = k.borrow();
-            let forward = self.dir;
-            let left = Vec2::new(-self.dir.y, self.dir.x); // left normal
-            let right = Vec2::new(self.dir.y, -self.dir.x); // right normal
-            let strafe_force = move_force * 0.7;
+        match self.control_mode {
+            ControlMode::Human => {
+                KEYS.with(|k| {
+                    let keys = k.borrow();
+                    let forward = self.dir;
+                    let left = Vec2::new(-self.dir.y, self.dir.x); // left normal
+                    let right = Vec2::new(self.dir.y, -self.dir.x); // right normal
+                    let strafe_force = move_force * 0.7;
 
-            if keys[38] || keys[87] {
-                force = force.add(&forward.scale(move_force));
+                    if keys[38] || keys[87] {
+                        force = force.add(&forward.scale(move_force));
+                    }
+                    if keys[40] || keys[83] {
+                        force = force.sub(&forward.scale(move_force));
+                    }
+                    if keys[65] || keys[81] {
+                        force = force.add(&left.scale(strafe_force));
+                    }
+                    if keys[68] || keys[69] {
+                        force = force.add(&right.scale(strafe_force));
+                    }
+                    if keys[37] {
+                        self.rotate(0.08); // Left arrow - turn left
+                    }
+                    if keys[39] {
+                        self.rotate(-0.08); // Right arrow - turn right
+                    }
+                    if keys[49] {
+                        self.current_weapon = 0;
+                    }
+                    if keys[50] && self.ammo >= 2 {
+                        self.current_weapon = 1;
+                    }
+                });
             }
-            if keys[40] || keys[83] {
-                force = force.sub(&forward.scale(move_force));
+            ControlMode::Bot => {
+                let (ai_force, ai_turn, ai_shoot, ai_weapon) = self.build_ai_command(now);
+                force = ai_force;
+                self.rotate(ai_turn);
+                self.current_weapon = ai_weapon;
+                shoot = ai_shoot;
             }
-            if keys[65] || keys[81] {
-                force = force.add(&left.scale(strafe_force));
-            }
-            if keys[68] || keys[69] {
-                force = force.add(&right.scale(strafe_force));
-            }
-            if keys[37] {
-                self.rotate(0.08); // Left arrow - turn left
-            }
-            if keys[39] {
-                self.rotate(-0.08); // Right arrow - turn right
-            }
-            if keys[49] {
-                self.current_weapon = 0;
-            }
-            if keys[50] && self.ammo >= 2 {
-                self.current_weapon = 1;
-            }
-        });
+        }
 
         // Normalize combined movement to prevent faster diagonal speed
         if force.length() > move_force {
@@ -570,14 +726,15 @@ impl DoomGame {
         }
 
         // Shooting
-        let shoot = KEYS.with(|k| k.borrow()[32])
-            || MOUSE_CLICKED.with(|mc| {
-                let clicked = mc.get();
-                mc.set(false);
-                clicked
-            });
+        if let ControlMode::Human = self.control_mode {
+            shoot = KEYS.with(|k| k.borrow()[32])
+                || MOUSE_CLICKED.with(|mc| {
+                    let clicked = mc.get();
+                    mc.set(false);
+                    clicked
+                });
+        }
 
-        let now = js_sys::Date::now();
         if shoot && now - self.last_shot_time > 250.0 && self.ammo > 0 {
             self.shoot(now);
         }
@@ -1877,10 +2034,13 @@ pub fn start_doom() {
 
 #[wasm_bindgen]
 pub fn start_doom_with_difficulty(diff: u8) {
-    let difficulty = match diff {
-        0 => Difficulty::Easy,
-        2 => Difficulty::Hard,
-        _ => Difficulty::Normal,
+    let (difficulty, control_mode) = match diff {
+        0 => (Difficulty::Easy, ControlMode::Human),
+        2 => (Difficulty::Hard, ControlMode::Human),
+        3 => (Difficulty::Normal, ControlMode::Bot),
+        4 => (Difficulty::Easy, ControlMode::Bot),
+        5 => (Difficulty::Hard, ControlMode::Bot),
+        _ => (Difficulty::Normal, ControlMode::Human),
     };
 
     if let Some(g) = document().get_element_by_id("graphics") {
@@ -1915,7 +2075,7 @@ pub fn start_doom_with_difficulty(diff: u8) {
     });
 
     GAME.with(|gm| {
-        *gm.borrow_mut() = Some(DoomGame::new(difficulty));
+        *gm.borrow_mut() = Some(DoomGame::new(difficulty, control_mode));
     });
 
     update_canvas_size();

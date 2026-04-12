@@ -255,9 +255,26 @@ impl System {
             "nano" | "vi" | "vim" => self.cmd_nano(args),
             "python" => self.cmd_python(args),
             "doom" => {
-                // Parse optional difficulty argument: easy|normal|hard or 0|1|2
+                // Parse optional difficulty argument: easy|normal|hard or 0|1|2,
+                // plus AI mode via `doom ai [easy|normal|hard]`.
                 if !args.is_empty() {
                     let raw = args[0].to_lowercase();
+                    if raw == "ai" || raw == "bot" {
+                        let ai_diff = if args.len() > 1 {
+                            match args[1].to_lowercase().as_str() {
+                                "easy" | "0" => 4u8,
+                                "normal" | "1" => 3u8,
+                                "hard" | "2" => 5u8,
+                                _ => {
+                                    return "usage: doom ai [easy|normal|hard]".to_string();
+                                }
+                            }
+                        } else {
+                            3u8
+                        };
+                        return format!("\x1b[LAUNCH_DOOM:{}]", ai_diff);
+                    }
+
                     let diff = match raw.as_str() {
                         "easy" | "0" => Some(0u8),
                         "normal" | "1" => Some(1u8),
@@ -266,9 +283,9 @@ impl System {
                     };
                     if let Some(d) = diff {
                         return format!("\x1b[LAUNCH_DOOM:{}]", d);
-                    } else {
-                        return "usage: doom [easy|normal|hard]".to_string();
                     }
+
+                    return "usage: doom [easy|normal|hard|ai [easy|normal|hard]]".to_string();
                 }
                 "\x1b[LAUNCH_DOOM]".to_string()
             }
@@ -4287,17 +4304,26 @@ DESCRIPTION
             doom - play a game
 
         SYNOPSIS
-            doom [easy|normal|hard]
+            doom [easy|normal|hard|ai [easy|normal|hard]]
 
         DESCRIPTION
             Launch a simple game rendered onto a canvas.
             Optional difficulty adjusts monster count, damage, player HP.
+            The AI mode lets the game play itself with an internal bot.
             Press ESC to exit.
 
         DIFFICULTY
             easy    Fewer monsters, lower damage, higher player health
             normal  Balanced baseline (default)
             hard    More monsters, higher damage, lower player health
+
+        AI MODE
+            doom ai
+            doom ai easy
+            doom ai normal
+            doom ai hard
+
+            Starts the internal AI controller at the selected difficulty.
         "#
                 .into()
             }
